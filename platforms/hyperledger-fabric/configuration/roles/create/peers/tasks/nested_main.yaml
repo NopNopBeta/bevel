@@ -58,6 +58,7 @@
  
 - name: Get information about StorageClasses
   kubernetes.core.k8s_info:
+    kubeconfig: "{{ kubernetes.config_file }}"
     kind: StorageClass
     api_version: storage.k8s.io/v1
     namespace: default

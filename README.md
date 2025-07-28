@@ -61,10 +61,10 @@ Please review [contributing](./CONTRIBUTING.md) guidelines to get started.
 If you are not using the provided Jenkins automation scripts, you can run the provisioning scripts within a docker runtime independent of your target Kubernetes cluster.
 ```
 # Build provisioning image
-docker build . -t ghcr.io/hyperledger/bevel-build
+docker build . -t ghcr.io/hyperledger/bevel-build:latest
 
 # Run the provisioning scripts
-docker run -it -v $(pwd):/home/bevel/ ghcr.io/hyperledger/bevel-build
+docker run -it -v $(pwd):/home/bevel/ ghcr.io/hyperledger/bevel-build:latest
 ```
 
 ## Initial Committers

@@ -36,9 +36,9 @@
   shell: |
     cd "{{ GIT_DIR }}"
     echo "---------------GIT PUSH---------------"
-    git config user.email {{ gitops.email }}
-    git config user.name {{ gitops.username }}
-    git --git-dir={{ GIT_DIR }}/.git pull
+    git config --global user.email {{ gitops.email }}
+    git config --global user.name {{ gitops.username }}
+    git --git-dir={{ GIT_DIR }}/.git pull https://{{ gitops.username }}:{{ gitops.password }}@{{ gitops.git_repo }}
     git --git-dir={{ GIT_DIR }}/.git add -A .
     
     git --git-dir={{ GIT_DIR }}/.git commit -s -m "{{ msg }}" || true
