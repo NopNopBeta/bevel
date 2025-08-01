@@ -37,6 +37,7 @@ spec:
         externalUrlSuffix: {{ org.external_url_suffix }}
 
     storage:
+      nameOverride: {{ component_name | replace('_','-') }}-{{ org.name | lower }}sc
       size: 512Mi
       reclaimPolicy: "Delete" 
       volumeBindingMode: 

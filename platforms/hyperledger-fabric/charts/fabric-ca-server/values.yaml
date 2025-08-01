@@ -48,6 +48,7 @@ global:
     externalUrlSuffix: test.blockchaincloudpoc.com
 
 storage:
+  nameOverride: aws-storageclass
   #Provide the size for CA
   #Eg. size: 512Mi
   size: 512Mi

@@ -24,7 +24,7 @@ image:
 {% endif %}
 
 peerName: {{ peer.name }}
-storageClass: storage-{{ peer.name }}
+storageClass: {{ peer.name }}-{{ org.name | lower }}sc
 storageSize: 256Mi
 localMspId: {{ org.name | lower}}MSP
 tlsStatus: true

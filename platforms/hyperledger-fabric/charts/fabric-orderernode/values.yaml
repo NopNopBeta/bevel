@@ -44,6 +44,7 @@ global:
     externalUrlSuffix: test.blockchaincloudpoc.com
 
 storage:
+  nameOverride: aws-storageclass
   #Provide storage size for Orderer Volume
   #Eg. size: 512Mi
   size: 512Mi
