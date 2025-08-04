@@ -47,6 +47,7 @@
     component: "{{ org.name | lower}}"
     component_name: "{{ peer.name | lower}}-{{ org.name | lower}}"
     orderer: "{{ network.orderers | first }}"
+    sc_name: "{{ component }}-bevel-storageclass"
     component_ns: "{{ org.name | lower}}-net"
     git_protocol: "{{ org.gitops.git_protocol }}"
     git_url: "{{ org.gitops.git_url }}"

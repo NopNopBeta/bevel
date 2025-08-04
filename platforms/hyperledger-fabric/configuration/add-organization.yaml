@@ -20,7 +20,7 @@
   no_log: "{{ no_ansible_log | default(false) }}"
   tasks:
 
-    # delete build directory
+    # # delete build directory
     - name: Remove build directory
       file:
         path: "./build"
@@ -51,6 +51,19 @@
         loop_var: org
       when: 
       - org.org_status is not defined or org.org_status == 'new'
+    # Create Storageclass for orgs
+    - name: "Create storageclass for each new organization"
+      include_role:
+        name: "{{ playbook_dir }}/../../../platforms/shared/configuration/roles/setup/storageclass"  
+      vars:
+        org_name: "{{ org.name | lower }}"
+        sc_name: "{{ org_name }}-bevel-storageclass"
+        region: "{{ org.k8s.region | default('eu-west-2') }}"
+      loop: "{{ network['organizations'] }}"
+      loop_control:
+        loop_var: org
+      when: 
+      - org.org_status is not defined or org.org_status == 'new'
         
     # Create CA Server helm-value files and check-in
     - name: Create CA server for each organization
@@ -59,6 +72,7 @@
       vars:
         component_ns: "{{ org.name | lower}}-net"
         component: "{{ org.name | lower}}"
+        sc_name: "{{ component }}-bevel-storageclass"
         component_services: "{{ org.services }}"
         kubernetes: "{{ org.k8s }}"
         vault: "{{ org.vault }}"
@@ -97,9 +111,10 @@
         name: "create/peers"
       vars:
         build_path: "./build"
-        namespace: "{{ org.name | lower}}-net"
-        component_type: "{{ org.type | lower}}"
+        namespace: "{{ org.name | lower }}-net"
+        component_type: "{{ org.type | lower }}"
         component_services: "{{ org.services }}"
+        sc_name: "{{ org.name | lower }}-bevel-storageclass"
         kubernetes: "{{ org.k8s }}"
         vault: "{{ org.vault }}"
         git_protocol: "{{ org.gitops.git_protocol }}"

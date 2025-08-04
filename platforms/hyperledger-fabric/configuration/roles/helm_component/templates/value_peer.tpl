@@ -37,13 +37,10 @@ spec:
         externalUrlSuffix: {{ org.external_url_suffix }}
 
     storage:
-      nameOverride: {{ component_name | replace('_','-') }}-{{ org.name | lower }}sc
+      enabled: false
+      nameOverride: {{ sc_name }}
       peer: 512Mi
       couchdb: 512Mi
-      reclaimPolicy: "Delete" 
-      volumeBindingMode: Immediate 
-      allowedTopologies:
-        enabled: false
 
     certs:
       generateCertificates: true
@@ -90,7 +87,7 @@ spec:
       localMspId: {{ name }}MSP
       tlsStatus: true
       cliEnabled: {{ enabled_cli }}
-      storageClass: {{ component_name | replace('_','-') }}-{{ org.name | lower }}sc
+      storageClass: {{ sc_name }}
       ordererAddress: {{ orderer.uri }}
       builder: hyperledger/fabric-ccenv
       couchdb:
