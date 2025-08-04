@@ -51,6 +51,7 @@
         loop_var: org
       when: 
       - org.org_status is not defined or org.org_status == 'new'
+
     # Create Storageclass for orgs
     - name: "Create storageclass for each new organization"
       include_role:
