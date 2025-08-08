@@ -20,7 +20,7 @@ keywords:
   - accenture
 home: https://hyperledger-bevel.readthedocs.io/en/latest/
 sources:
-  - https://github.com/hyperledger/bevel
+  - https://github.com/hyperledger-bevel/bevel
 maintainers:
   - name: Hyperledger Bevel maintainers
-    email: bevel@lists.hyperledger.org
+    email: bevel@lists.lfdecentralizedtrust.org
