@@ -64,7 +64,13 @@ If you are not using the provided Jenkins automation scripts, you can run the pr
 docker build . -t ghcr.io/hyperledger/bevel-build:latest
 
 # Run the provisioning scripts
-docker run -it -v $(pwd):/home/bevel/ ghcr.io/hyperledger/bevel-build:latest
+docker run -it -v $(pwd):/home/bevel/ --user ubuntu ghcr.io/hyperledger/bevel-build:latest
+
+# If you want to run a long running container
+docker run -d -v "$(pwd)":/home/bevel/ --user ubuntu bevel-build:latest tail -f /dev/null --name bevel
+docker exec -it bevel bash
+cd bevel
+# And then run the ansible scripts from /home/bevel
 ```
 
 ## Initial Committers
