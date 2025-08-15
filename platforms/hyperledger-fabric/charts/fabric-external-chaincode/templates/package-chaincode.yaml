@@ -12,7 +12,7 @@ metadata:
   annotations:
     helm.sh/hook-weight: "1"
     helm.sh/hook: "pre-install,pre-upgrade"
-    helm.sh/hook-delete-policy: "hook-succeeded"
+    helm.sh/hook-delete-policy: "before-hook-creation"
     helm.sh/hook-depends-on: "{{ .Release.Name }}-certs"
 spec:
   backoffLimit: 5
@@ -46,17 +46,27 @@ spec:
       - name: package-manager
         configMap:
           name: package-manager
+      {{- if .Values.global.vault.tls }}
+      - name: vaultca
+        secret:
+          secretName: {{ .Values.global.vault.tls }}
+          items:
+          - key: ca-certificates.crt
+            path: ca-certificates.crt
+      {{- end }}
       containers:
         - name: package-chaincode
           image: {{ .Values.image.fabrictools }}
           imagePullPolicy: IfNotPresent
           env:
           - name: CHAINCODE_NAME
-            value: {{ .Values.chaincode.name }}
+            value: "{{ .Values.chaincode.name }}"
           - name: CHAINCODE_VERSION
-            value: {{ .Values.chaincode.version }}
+            value: "{{ .Values.chaincode.version }}"
+          - name: CHAINCODE_TLS_ENABLED
+            value: "{{ .Values.chaincode.tls | default false }}"
           - name: CHAINCODE_ADDRESS
-            value: "{{ .Values.chaincode.address | default (printf '%s.%s.svc.cluster.local:7052' .Release.Name .Release.Namespace) }}"
+            value: "{{ .Values.chaincode.address | default (printf "%s.%s.svc.cluster.local:7052" .Release.Name .Release.Namespace) }}"
           - name: PEER_NAME
             value: "{{ .Values.peer.name }}"
           - name: PEER_ADDRESS
@@ -70,7 +80,7 @@ spec:
           - name: ORG_NAME
             value: "{{ .Values.peer.localmspid | lower | replace "msp" "" }}"
           - name: FABRIC_LOGGING_SPEC
-            value: "{{ .Values.peer.loglevel | default 'info' }}"
+            value: "{{ .Values.peer.loglevel | default "info" }}"
           - name: CORE_PEER_TLS_ENABLED
             value: "{{ .Values.peer.tlsstatus }}"
           - name: CORE_PEER_LOCALMSPID
@@ -99,25 +109,32 @@ spec:
           {{- if .Values.global.vault.tls }}
           - name: VAULT_CACERT
             value: /opt/vault/tls/ca-certificates.crt
+          {{- else }}
+          - name: VAULT_SKIP_VERIFY
+            value: "true"
           {{- end }}
           {{- end }}
           command: ["sh", "-c"]
           args:
             - |
+              set -euo pipefail
+              
+              # Install required packages
               . /scripts/package-manager.sh
-              # Define the packages to install
               packages_to_install="curl jq"
               install_packages "$packages_to_install"
+              
               # Download kubectl binary
-              curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.0/bin/linux/amd64/kubectl;
-              chmod u+x kubectl && mv kubectl /usr/local/bin/kubectl;
-
-              {{- if (eq .Values.global.vault.type "hashicorp") }}
+              curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.0/bin/linux/amd64/kubectl
+              chmod u+x kubectl && mv kubectl /usr/local/bin/kubectl
+              
+              {{- if eq .Values.global.vault.type "hashicorp" }}
+              # Initialize vault
               . /scripts/bevel-vault.sh
               echo "Getting vault Token..."
               vaultBevelFunc "init"
               {{- end }}
-
+              
               echo "Starting chaincode package and installation process..."
               
               # Create package directory
@@ -131,7 +148,7 @@ spec:
               {{- if eq .Values.global.vault.type "hashicorp" }}
               # Check vault for existing package
               PACKAGE_EXISTS="false"
-              vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${PACKAGE_NAME}"
+              vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package/v${CHAINCODE_VERSION}"
               if [ "$SECRETS_AVAILABLE" = "yes" ]; then
                 echo "Package already exists in vault"
                 PACKAGE_EXISTS="true"
@@ -144,31 +161,60 @@ spec:
                 PACKAGE_EXISTS="true"
               fi
               {{- end }}
-
+              
               if [ "$PACKAGE_EXISTS" = "false" ]; then
                 echo "Creating new chaincode package..."
                 
-                # Get chaincode certificates for TLS-enabled external chaincode
+                # Wait for certificates to be generated if TLS is enabled
                 {{- if .Values.chaincode.tls }}
-                echo "Retrieving chaincode certificates for TLS configuration..."
+                echo "TLS enabled - waiting for certificates to be generated..."
+                
+                # Wait for server certificates (for chaincode server identity)
+                echo "Waiting for server certificates..."
+                RETRY_COUNT=0
+                MAX_RETRIES=30
+                while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+                  if [ -f /crypto-config/${CHAINCODE_NAME}-${CHAINCODE_VERSION}-certs-generated ]; then
+                    echo "Server certificates found!"
+                    break
+                  fi
+                  echo "Waiting for server certificates... (attempt $((RETRY_COUNT + 1))/$MAX_RETRIES)"
+                  sleep 10
+                  RETRY_COUNT=$((RETRY_COUNT + 1))
+                done
+                
+                if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+                  echo "Error: Timeout waiting for server certificates"
+                  exit 1
+                fi
+                
+                echo "Retrieving chaincode server certificates for TLS configuration..."
                 
                 {{- if eq .Values.global.vault.type "hashicorp" }}
-                # Get client certificates from vault
-                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}-{{ .Release.Name }}-certs"
+                # Get server certificates from vault
+                SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}@{{ .Release.Namespace }}"
+                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${SERVER_USER}-tls"
                 if [ "$SECRETS_AVAILABLE" = "yes" ]; then
-                  echo "${VAULT_SECRET}" | jq -r ".ca_crt" > ${PACKAGE_DIR}/ca.crt
-                  echo "${VAULT_SECRET}" | jq -r ".client_crt" > ${PACKAGE_DIR}/client.crt
-                  echo "${VAULT_SECRET}" | jq -r ".client_key" > ${PACKAGE_DIR}/client.key
+                  echo "${VAULT_SECRET}" | jq -r ".ca_crt" | sed 's/\\n/\n/g' > ${PACKAGE_DIR}/ca.crt
+                  echo "${VAULT_SECRET}" | jq -r ".client_crt" | sed 's/\\n/\n/g' > ${PACKAGE_DIR}/client.crt
+                  echo "${VAULT_SECRET}" | jq -r ".client_key" | sed 's/\\n/\n/g' > ${PACKAGE_DIR}/client.key
                 else
-                  echo "Error: Client certificates not found in vault"
+                  echo "Error: Server certificates not found in vault"
                   exit 1
                 fi
                 {{- else }}
-                # Get client certificates from Kubernetes secret
-                kubectl get secret --namespace {{ .Release.Namespace }} ${CHAINCODE_NAME}-{{ .Release.Name }}-certs -o jsonpath='{.data.cacrt}' | base64 -d > ${PACKAGE_DIR}/ca.crt
-                kubectl get secret --namespace {{ .Release.Namespace }} ${CHAINCODE_NAME}-{{ .Release.Name }}-certs -o jsonpath='{.data.clientcrt}' | base64 -d > ${PACKAGE_DIR}/client.crt
-                kubectl get secret --namespace {{ .Release.Namespace }} ${CHAINCODE_NAME}-{{ .Release.Name }}-certs -o jsonpath='{.data.clientkey}' | base64 -d > ${PACKAGE_DIR}/client.key
+                # Get server certificates from Kubernetes secret
+                SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}@{{ .Release.Namespace }}"
+                kubectl get secret --namespace {{ .Release.Namespace }} ${SERVER_USER}-tls -o jsonpath='{.data.cacrt}' | base64 -d > ${PACKAGE_DIR}/ca.crt
+                kubectl get secret --namespace {{ .Release.Namespace }} ${SERVER_USER}-tls -o jsonpath='{.data.clientcrt}' | base64 -d > ${PACKAGE_DIR}/client.crt
+                kubectl get secret --namespace {{ .Release.Namespace }} ${SERVER_USER}-tls -o jsonpath='{.data.clientkey}' | base64 -d > ${PACKAGE_DIR}/client.key
                 {{- end }}
+                
+                # Verify certificate files
+                if [ ! -f ${PACKAGE_DIR}/ca.crt ] || [ ! -f ${PACKAGE_DIR}/client.crt ] || [ ! -f ${PACKAGE_DIR}/client.key ]; then
+                  echo "Error: Certificate files are missing"
+                  exit 1
+                fi
                 
                 # Create connection.json with TLS
                 echo "Creating connection.json with TLS configuration..."
@@ -189,7 +235,7 @@ spec:
                   }' > connection.json
                 {{- else }}
                 # Create connection.json without TLS
-                echo "Creating connection.json without TLS..."
+                echo "TLS disabled - Creating connection.json without TLS..."
                 cd ${PACKAGE_DIR}
                 jq -n \
                   --arg address "${CHAINCODE_ADDRESS}" \
@@ -220,3 +266,104 @@ spec:
                 fi
                 
                 echo "Package created successfully: ${PACKAGE_NAME}.tgz"
+                
+                # Store package in vault or Kubernetes secret
+                {{- if eq .Values.global.vault.type "hashicorp" }}
+                echo "Storing package in vault..."
+                PACKAGE_VAULT_ADDR="${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package/v${CHAINCODE_VERSION}"
+                PACKAGE_B64=$(cat ${PACKAGE_NAME}.tgz | base64 -w 0)
+                echo "{\"data\":{\"package-base64\":\"${PACKAGE_B64}\"}}" > package_payload.json
+                vaultBevelFunc 'write' "${PACKAGE_VAULT_ADDR}" 'package_payload.json'
+                {{- else }}
+                echo "Storing package in Kubernetes secret..."
+                kubectl create secret generic ${PACKAGE_NAME}-package \
+                  --namespace {{ .Release.Namespace }} \
+                  --from-file=package=${PACKAGE_NAME}.tgz \
+                  --dry-run=client -o yaml | kubectl apply -f -
+                {{- end }}
+                
+                echo "Package stored successfully"
+              else
+                echo "Package already exists, skipping creation..."
+              fi
+              
+              # Check if chaincode is already installed
+              echo "Checking if chaincode is already installed..."
+              PEER_POD=$(kubectl get pods -n {{ .Release.Namespace }} -l app={{ .Values.peer.name }} -o jsonpath='{.items[0].metadata.name}')
+              if [ -z "$PEER_POD" ]; then
+                echo "Error: Peer pod not found"
+                exit 1
+              fi
+              
+              # Check installed chaincodes
+              INSTALLED_CC=$(kubectl exec -n {{ .Release.Namespace }} $PEER_POD -c {{ .Values.peer.name }} -- \
+                peer lifecycle chaincode queryinstalled -O json | \
+                jq -r --arg label "${PACKAGE_NAME}" '.installed_chaincodes[]? | select(.label==$label) | .package_id' || echo "")
+              
+              if [ -n "$INSTALLED_CC" ]; then
+                echo "Chaincode ${PACKAGE_NAME} is already installed with package ID: $INSTALLED_CC"
+              else
+                echo "Installing chaincode package..."
+                
+                # Get the package from storage and install
+                {{- if eq .Values.global.vault.type "hashicorp" }}
+                # Get package from vault
+                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package/v${CHAINCODE_VERSION}"
+                if [ "$SECRETS_AVAILABLE" = "yes" ]; then
+                  echo "${VAULT_SECRET}" | jq -r ".\"package-base64\"" | base64 -d > /tmp/${PACKAGE_NAME}.tgz
+                else
+                  echo "Error: Package not found in vault"
+                  exit 1
+                fi
+                {{- else }}
+                # Get package from Kubernetes secret
+                kubectl get secret --namespace {{ .Release.Namespace }} ${PACKAGE_NAME}-package -o jsonpath='{.data.package}' | base64 -d > /tmp/${PACKAGE_NAME}.tgz
+                {{- end }}
+                
+                # Copy package to peer pod and install
+                kubectl cp /tmp/${PACKAGE_NAME}.tgz {{ .Release.Namespace }}/$PEER_POD:/opt/gopath/src/github.com/hyperledger/fabric/${PACKAGE_NAME}.tgz -c {{ .Values.peer.name }}
+                
+                # Install the chaincode
+                kubectl exec -n {{ .Release.Namespace }} $PEER_POD -c {{ .Values.peer.name }} -- \
+                  peer lifecycle chaincode install ${PACKAGE_NAME}.tgz
+                
+                # Verify installation
+                INSTALLED_CC=$(kubectl exec -n {{ .Release.Namespace }} $PEER_POD -c {{ .Values.peer.name }} -- \
+                  peer lifecycle chaincode queryinstalled -O json | \
+                  jq -r --arg label "${PACKAGE_NAME}" '.installed_chaincodes[]? | select(.label==$label) | .package_id')
+                
+                if [ -n "$INSTALLED_CC" ]; then
+                  echo "Chaincode installed successfully with package ID: $INSTALLED_CC"
+                  
+                  # Store the package ID for future reference
+                  {{- if eq .Values.global.vault.type "hashicorp" }}
+                  echo "{\"data\":{\"package_id\":\"${INSTALLED_CC}\"}}" > package_id_payload.json
+                  vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package_id/v${CHAINCODE_VERSION}" 'package_id_payload.json'
+                  {{- else }}
+                  kubectl create secret generic ${PACKAGE_NAME}-package-id \
+                    --namespace {{ .Release.Namespace }} \
+                    --from-literal=package_id="${INSTALLED_CC}" \
+                    --dry-run=client -o yaml | kubectl apply -f -
+                  {{- end }}
+                else
+                  echo "Error: Chaincode installation failed"
+                  exit 1
+                fi
+              fi
+              
+              echo "Chaincode package and installation completed successfully"
+          volumeMounts:
+          - name: certificates
+            mountPath: /crypto-config
+          - name: package-temp
+            mountPath: /package-temp
+          - name: scripts-volume
+            mountPath: /scripts/bevel-vault.sh
+            subPath: bevel-vault.sh
+          - name: package-manager
+            mountPath: /scripts/package-manager.sh
+            subPath: package-manager.sh
+          {{- if .Values.global.vault.tls }}
+          - name: vaultca
+            mountPath: /opt/vault/tls
+          {{- end }}

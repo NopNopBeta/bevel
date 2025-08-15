@@ -91,6 +91,9 @@ data:
         cp ${ORG_HOME}/client${ID_NAME}/tls/tlscacerts/* ${ORG_CYPTO_FOLDER}/users/${ORG_USER}/tls/ca.crt
       fi
     fi
+    
+    # Create marker file to indicate certificates are generated
+    touch /crypto-config/${ID_NAME}-certs-generated
     cd ${CURRENT_DIR}
 
   generate-crypto-chaincode-server.sh: |-
@@ -176,6 +179,10 @@ data:
         cp ${ORG_HOME}/chaincodes/${CHAINCODE_NAME}/v${VERSION}/tls/tlscacerts/* ${ORG_CYPTO_FOLDER}/chaincodes/${ORG_USER}/tls/ca.crt
       fi
     fi
+    
+    # Create marker file to indicate certificates are generated
+    touch /crypto-config/${CHAINCODE_NAME}-${VERSION}-certs-generated
+    cd ${CURRENT_DIR}
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -191,6 +198,16 @@ metadata:
 data:
   store-vault-server.sh: |-
     #!/bin/bash
+    
+    # Environment variables
+    COMPONENT_NAME="{{ .Release.Namespace }}"
+    CHAINCODE_NAME="{{ .Values.chaincode.name }}"
+    VERSION="{{ .Values.chaincode.version }}"
+    REFRESH_CERT_VALUE="{{ .Values.certs.refreshCertValue }}"
+    {{- if eq .Values.global.vault.type "hashicorp" }}
+    VAULT_SECRET_ENGINE="{{ .Values.global.vault.secretEngine }}"
+    VAULT_SECRET_PREFIX="{{ .Values.global.vault.secretPrefix }}"
+    {{- end }}
 
     formatCertificate () {
       NAME="${1##*/}"
@@ -199,10 +216,15 @@ data:
         echo "$line\n"
       done < ${1} > ${2}/${NAME}.txt
     }
+    
     function saveServerSecrets {
       USER=$1
       TLS_KEY=$1-tls
       MSP_KEY=$1-msp
+      
+      ORG_CYPTO_CC_FOLDER="/crypto-config/peerOrganizations/${COMPONENT_NAME}/chaincodes"
+      
+      echo "Storing secrets for server user: ${USER}"
     {{- if eq .Values.global.vault.type "hashicorp" }}
       . ../bevel-vault.sh
       # Calling a function to retrieve the vault token.
@@ -215,11 +237,14 @@ data:
       mkdir -p ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/cacerts
       mkdir -p ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/tlscacerts
 
+      # Store TLS certificates in Vault and K8s
       if [ ! -e /crypto-config/${TLS_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+        echo "Processing TLS certificates for ${USER}"
+        
         # This commands put the certificates with correct format for the curl command
-        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/tls/ca.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
-        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
-        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.key" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
+        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}/tls/ca.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
+        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}/tls/client.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
+        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}/tls/client.key" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
 
         CA_CRT=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/tls/ca.crt.txt)
         CLIENT_CRT=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/tls/client.crt.txt)
@@ -236,18 +261,24 @@ data:
         }" > payload.json
 
         # This command copy the crypto material for users (tls)
-        vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/users/${TLS_KEY}" 'payload.json'
+        vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${TLS_KEY}" 'payload.json'
         rm payload.json
+        
+        # Mark TLS as stored
+        touch /crypto-config/${TLS_KEY}-exists
       fi
 
+      # Store MSP certificates in Vault and K8s
       if [ ! -e /crypto-config/${MSP_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+        echo "Processing MSP certificates for ${USER}"
+        
         # This commands put the certificates with correct format for the curl command
-        SK_NAME=$(find ${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/msp/keystore/ -name "*_sk")
-        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/msp/admincerts/${USER}@${COMPONENT_NAME}-cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
+        SK_NAME=$(find ${ORG_CYPTO_CC_FOLDER}/${USER}/msp/keystore/ -name "*_sk")
+        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}/msp/admincerts/${USER}-cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
         formatCertificate "${SK_NAME}" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
-        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/msp/signcerts/cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
+        formatCertificate "${ORG_CYPTO_CC_FOLDER}/${USER}/msp/signcerts/cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
 
-        ADMINCERTS=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/${USER}@${COMPONENT_NAME}-cert.pem.txt)
+        ADMINCERTS=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/${USER}-cert.pem.txt)
         KEYSTORE=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/*_sk.txt)
         SIGNCERTS=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/cert.pem.txt)
 
@@ -256,20 +287,22 @@ data:
           \"data\": 
             {
               \"admincerts\": \"${ADMINCERTS}\",
-              \"cacerts\": \"${CACERTS}\",
               \"keystore\": \"${KEYSTORE}\",
-              \"signcerts\": \"${SIGNCERTS}\",
-              \"tlscacerts\": \"${TLSCERTS}\"
+              \"signcerts\": \"${SIGNCERTS}\"
             }  
         }" > payload.json
 
         #This command copy the msp certificates to the Vault
-        vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/users/${MSP_KEY}" 'payload.json'
+        vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${MSP_KEY}" 'payload.json'
         rm payload.json
+        
+        # Mark MSP as stored
+        touch /crypto-config/${MSP_KEY}-exists
       fi
     {{- end }}
-      # Check if secret exists
-      if [ ! -e /crypto-config/${TLS_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+      
+      # Store TLS certificates in Kubernetes secrets
+      if [ ! -e /crypto-config/${TLS_KEY}-k8s-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
         kubectl get secret --namespace ${COMPONENT_NAME} ${TLS_KEY} >/dev/null 2>&1
         if [ $? -eq 0 ]; then
           # Delete the secret if exists
@@ -277,29 +310,45 @@ data:
         fi
 
         kubectl create secret generic ${TLS_KEY} --namespace ${COMPONENT_NAME} \
-          --from-file=cacrt=${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/tls/ca.crt \
-          --from-file=clientcrt=${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.crt  \
-          --from-file=clientkey=${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.key
+          --from-file=cacrt=${ORG_CYPTO_CC_FOLDER}/${USER}/tls/ca.crt \
+          --from-file=clientcrt=${ORG_CYPTO_CC_FOLDER}/${USER}/tls/client.crt  \
+          --from-file=clientkey=${ORG_CYPTO_CC_FOLDER}/${USER}/tls/client.key
+          
+        touch /crypto-config/${TLS_KEY}-k8s-exists
       fi
 
-      if [ ! -e /crypto-config/${MSP_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
-        SK_NAME=$(find ${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/msp/keystore/ -name "*_sk")
+      # Store MSP certificates in Kubernetes secrets
+      if [ ! -e /crypto-config/${MSP_KEY}-k8s-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+        SK_NAME=$(find ${ORG_CYPTO_CC_FOLDER}/${USER}/msp/keystore/ -name "*_sk")
         kubectl get secret --namespace ${COMPONENT_NAME} ${MSP_KEY} >/dev/null 2>&1
         if [ $? -eq 0 ]; then
           # Delete the secret if exists
           kubectl delete secret --namespace ${COMPONENT_NAME} ${MSP_KEY}
         fi
         kubectl create secret generic ${MSP_KEY} --namespace ${COMPONENT_NAME} \
-          --from-file=admincerts=${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/msp/admincerts/${USER}@${COMPONENT_NAME}-cert.pem \
+          --from-file=admincerts=${ORG_CYPTO_CC_FOLDER}/${USER}/msp/admincerts/${USER}-cert.pem \
           --from-file=keystore=${SK_NAME} \
-          --from-file=signcerts=${ORG_CYPTO_CC_FOLDER}/${USER}@${COMPONENT_NAME}/msp/signcerts/cert.pem      fi
-      echo "${USER} certificates are successfully stored."
+          --from-file=signcerts=${ORG_CYPTO_CC_FOLDER}/${USER}/msp/signcerts/cert.pem
+          
+        touch /crypto-config/${MSP_KEY}-k8s-exists
+      fi
+      echo "${USER} certificates are successfully stored in both Vault and Kubernetes."
     }
-
-    ORG_CYPTO_CC_FOLDER="/crypto-config/peerOrganizations/${COMPONENT_NAME}/chaincodes"
-    saveServerSecrets $1
+    
+    echo "Proceeding with storage of certificates..."
+    saveServerSecrets "${CHAINCODE_NAME}-${VERSION}@${COMPONENT_NAME}"
+    
   store-vault-chaincode.sh: |-
     #!/bin/bash
+    
+    # Environment variables
+    COMPONENT_NAME="{{ .Release.Namespace }}"
+    ID_NAME="{{ .Values.certs.orgData.orgName }}-{{ .Values.chaincode.name }}"
+    REFRESH_CERT_VALUE="{{ .Values.certs.refreshCertValue }}"
+    {{- if eq .Values.global.vault.type "hashicorp" }}
+    VAULT_SECRET_ENGINE="{{ .Values.global.vault.secretEngine }}"
+    VAULT_SECRET_PREFIX="{{ .Values.global.vault.secretPrefix }}"
+    {{- end }}
 
     formatCertificate () {
       NAME="${1##*/}"
@@ -308,28 +357,35 @@ data:
         echo "$line\n"
       done < ${1} > ${2}/${NAME}.txt
     }
+    
     function saveChaincodeSecrets {
       USER=$1
       TLS_KEY=$1-tls
       MSP_KEY=$1-msp
+      
+      ORG_CYPTO_USERS_FOLDER="/crypto-config/peerOrganizations/${COMPONENT_NAME}/users"
+      
+      echo "Storing secrets for chaincode user: ${USER}"
     {{- if eq .Values.global.vault.type "hashicorp" }}
       . ../bevel-vault.sh
       # Calling a function to retrieve the vault token.
       vaultBevelFunc "init"
   
       FORMAT_CERTIFICATE_PATH="/formatcertificate"
-      ORG_CYPTO_USERS_FOLDER="/crypto-config/peerOrganizations/${COMPONENT_NAME}/users"
 
       mkdir -p ${FORMAT_CERTIFICATE_PATH}/${USER}/tls
       mkdir -p ${FORMAT_CERTIFICATE_PATH}/${USER}/msp
       mkdir -p ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/cacerts
       mkdir -p ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/tlscacerts
 
+      # Store TLS certificates in Vault
       if [ ! -e /crypto-config/${TLS_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+        echo "Processing TLS certificates for ${USER}"
+        
         # This commands put the certificates with correct format for the curl command
-        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/tls/ca.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
-        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
-        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.key" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
+        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}/tls/ca.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
+        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}/tls/client.crt" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
+        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}/tls/client.key" "${FORMAT_CERTIFICATE_PATH}/${USER}/tls"
 
         CA_CRT=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/tls/ca.crt.txt)
         CLIENT_CRT=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/tls/client.crt.txt)
@@ -348,16 +404,22 @@ data:
         # This command copy the crypto material for users (tls)
         vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/users/${TLS_KEY}" 'payload.json'
         rm payload.json
+        
+        # Mark TLS as stored
+        touch /crypto-config/${TLS_KEY}-exists
       fi
 
+      # Store MSP certificates in Vault
       if [ ! -e /crypto-config/${MSP_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+        echo "Processing MSP certificates for ${USER}"
+        
         # This commands put the certificates with correct format for the curl command
-        SK_NAME=$(find ${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/msp/keystore/ -name "*_sk")
-        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/msp/admincerts/${USER}@${COMPONENT_NAME}-cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
+        SK_NAME=$(find ${ORG_CYPTO_USERS_FOLDER}/${USER}/msp/keystore/ -name "*_sk")
+        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}/msp/admincerts/${USER}-cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
         formatCertificate "${SK_NAME}" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
-        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/msp/signcerts/cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
+        formatCertificate "${ORG_CYPTO_USERS_FOLDER}/${USER}/msp/signcerts/cert.pem" "${FORMAT_CERTIFICATE_PATH}/${USER}/msp"
 
-        ADMINCERTS=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/${USER}@${COMPONENT_NAME}-cert.pem.txt)
+        ADMINCERTS=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/${USER}-cert.pem.txt)
         KEYSTORE=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/*_sk.txt)
         SIGNCERTS=$(cat ${FORMAT_CERTIFICATE_PATH}/${USER}/msp/cert.pem.txt)
 
@@ -366,20 +428,22 @@ data:
           \"data\": 
             {
               \"admincerts\": \"${ADMINCERTS}\",
-              \"cacerts\": \"${CACERTS}\",
               \"keystore\": \"${KEYSTORE}\",
-              \"signcerts\": \"${SIGNCERTS}\",
-              \"tlscacerts\": \"${TLSCERTS}\"
+              \"signcerts\": \"${SIGNCERTS}\"
             }  
         }" > payload.json
 
         #This command copy the msp certificates to the Vault
         vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/users/${MSP_KEY}" 'payload.json'
         rm payload.json
+        
+        # Mark MSP as stored
+        touch /crypto-config/${MSP_KEY}-exists
       fi
     {{- end }}
-      # Check if secret exists
-      if [ ! -e /crypto-config/${TLS_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+      
+      # Store TLS certificates in Kubernetes secrets
+      if [ ! -e /crypto-config/${TLS_KEY}-k8s-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
         kubectl get secret --namespace ${COMPONENT_NAME} ${TLS_KEY} >/dev/null 2>&1
         if [ $? -eq 0 ]; then
           # Delete the secret if exists
@@ -387,26 +451,38 @@ data:
         fi
 
         kubectl create secret generic ${TLS_KEY} --namespace ${COMPONENT_NAME} \
-          --from-file=cacrt=${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/tls/ca.crt \
-          --from-file=clientcrt=${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.crt  \
-          --from-file=clientkey=${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/tls/client.key
+          --from-file=cacrt=${ORG_CYPTO_USERS_FOLDER}/${USER}/tls/ca.crt \
+          --from-file=clientcrt=${ORG_CYPTO_USERS_FOLDER}/${USER}/tls/client.crt  \
+          --from-file=clientkey=${ORG_CYPTO_USERS_FOLDER}/${USER}/tls/client.key
+          
+        touch /crypto-config/${TLS_KEY}-k8s-exists
       fi
 
-      if [ ! -e /crypto-config/${MSP_KEY}-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
-        SK_NAME=$(find ${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/msp/keystore/ -name "*_sk")
+      # Store MSP certificates in Kubernetes secrets
+      if [ ! -e /crypto-config/${MSP_KEY}-k8s-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+        SK_NAME=$(find ${ORG_CYPTO_USERS_FOLDER}/${USER}/msp/keystore/ -name "*_sk")
         kubectl get secret --namespace ${COMPONENT_NAME} ${MSP_KEY} >/dev/null 2>&1
         if [ $? -eq 0 ]; then
           # Delete the secret if exists
           kubectl delete secret --namespace ${COMPONENT_NAME} ${MSP_KEY}
         fi
         kubectl create secret generic ${MSP_KEY} --namespace ${COMPONENT_NAME} \
-          --from-file=admincerts=${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/msp/admincerts/${USER}@${COMPONENT_NAME}-cert.pem \
+          --from-file=admincerts=${ORG_CYPTO_USERS_FOLDER}/${USER}/msp/admincerts/${USER}-cert.pem \
           --from-file=keystore=${SK_NAME} \
-          --from-file=signcerts=${ORG_CYPTO_USERS_FOLDER}/${USER}@${COMPONENT_NAME}/msp/signcerts/cert.pem
+          --from-file=signcerts=${ORG_CYPTO_USERS_FOLDER}/${USER}/msp/signcerts/cert.pem
+          
+        touch /crypto-config/${MSP_KEY}-k8s-exists
       fi
-      echo "${USER} certificates are successfully stored."
+      echo "${USER} certificates are successfully stored in both Vault and Kubernetes."
     }
 
-    ORG_CYPTO_USERS_FOLDER="/crypto-config/peerOrganizations/${COMPONENT_NAME}/users"
-    saveChaincodeSecrets $1
+    # Wait for peer certificates to be generated
+    echo "Waiting for peer certificates to be generated..."
+    while [ ! -f /crypto-config/${ID_NAME}-certs-generated ]; do
+      echo "Waiting for certificates..."
+      sleep 5
+    done
+    
+    echo "Certificates found, proceeding with storage..."
+    saveChaincodeSecrets "${ID_NAME}@${COMPONENT_NAME}"
 {{- end }}
