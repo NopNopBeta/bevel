@@ -1,0 +1,222 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-package-install
+  labels:
+    app.kubernetes.io/name: {{ include "fabric-external-chaincode.name" . }}-package
+    app.kubernetes.io/component: chaincode-package
+    app.kubernetes.io/part-of: {{ include "fabric-external-chaincode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: helm
+  annotations:
+    helm.sh/hook-weight: "1"
+    helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-delete-policy: "hook-succeeded"
+    helm.sh/hook-depends-on: "{{ .Release.Name }}-certs"
+spec:
+  backoffLimit: 5
+  completions: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "fabric-external-chaincode.name" . }}-package
+        app.kubernetes.io/component: chaincode-package
+        app.kubernetes.io/part-of: {{ include "fabric-external-chaincode.fullname" . }}
+        app.kubernetes.io/namespace: {{ .Release.Namespace }}
+        app.kubernetes.io/release: {{ .Release.Name }}
+        app.kubernetes.io/managed-by: helm
+    spec:
+      serviceAccountName: {{ .Values.global.serviceAccountName }}
+      restartPolicy: "OnFailure"
+      {{- if .Values.image.pullSecret }}
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecret }}
+      {{- end }}
+      volumes:
+      - name: certificates
+        emptyDir:
+          medium: Memory
+      - name: package-temp
+        emptyDir:
+          medium: Memory
+      - name: scripts-volume
+        configMap:
+          name: bevel-vault-script
+      - name: package-manager
+        configMap:
+          name: package-manager
+      containers:
+        - name: package-chaincode
+          image: {{ .Values.image.fabrictools }}
+          imagePullPolicy: IfNotPresent
+          env:
+          - name: CHAINCODE_NAME
+            value: {{ .Values.chaincode.name }}
+          - name: CHAINCODE_VERSION
+            value: {{ .Values.chaincode.version }}
+          - name: CHAINCODE_ADDRESS
+            value: "{{ .Values.chaincode.address | default (printf '%s.%s.svc.cluster.local:7052' .Release.Name .Release.Namespace) }}"
+          - name: PEER_NAME
+            value: "{{ .Values.peer.name }}"
+          - name: PEER_ADDRESS
+            value: "{{ .Values.peer.address }}"
+          - name: PEER_LOCALMSPID
+            value: "{{ .Values.peer.localmspid }}"
+          - name: PEER_TLS_ENABLED
+            value: "{{ .Values.peer.tlsstatus }}"
+          - name: COMPONENT_NAME
+            value: "{{ .Release.Namespace }}"
+          - name: ORG_NAME
+            value: "{{ .Values.peer.localmspid | lower | replace "msp" "" }}"
+          - name: FABRIC_LOGGING_SPEC
+            value: "{{ .Values.peer.loglevel | default 'info' }}"
+          - name: CORE_PEER_TLS_ENABLED
+            value: "{{ .Values.peer.tlsstatus }}"
+          - name: CORE_PEER_LOCALMSPID
+            value: "{{ .Values.peer.localmspid }}"
+          - name: CORE_PEER_TLS_ROOTCERT_FILE
+            value: "/opt/gopath/src/github.com/hyperledger/fabric/crypto/admin/msp/cacerts/ca.crt"
+          - name: CORE_PEER_MSPCONFIGPATH
+            value: "/opt/gopath/src/github.com/hyperledger/fabric/crypto/admin/msp"
+          - name: CORE_PEER_ADDRESS
+            value: "{{ .Values.peer.address }}"
+          - name: ORDERER_CA
+            value: "/opt/gopath/src/github.com/hyperledger/fabric/crypto/orderer/tls/ca.crt"
+          {{- if eq .Values.global.vault.type "hashicorp" }}
+          - name: VAULT_ADDR
+            value: {{ .Values.global.vault.address }}
+          - name: VAULT_APP_ROLE
+            value: {{ .Values.global.vault.role }}
+          - name: KUBERNETES_AUTH_PATH
+            value: {{ .Values.global.vault.authPath }}
+          - name: VAULT_TYPE
+            value: {{ .Values.global.vault.type }}
+          - name: VAULT_SECRET_ENGINE
+            value: "{{ .Values.global.vault.secretEngine }}"
+          - name: VAULT_SECRET_PREFIX
+            value: "{{ .Values.global.vault.secretPrefix }}"
+          {{- if .Values.global.vault.tls }}
+          - name: VAULT_CACERT
+            value: /opt/vault/tls/ca-certificates.crt
+          {{- end }}
+          {{- end }}
+          command: ["sh", "-c"]
+          args:
+            - |
+              . /scripts/package-manager.sh
+              # Define the packages to install
+              packages_to_install="curl jq"
+              install_packages "$packages_to_install"
+              # Download kubectl binary
+              curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.0/bin/linux/amd64/kubectl;
+              chmod u+x kubectl && mv kubectl /usr/local/bin/kubectl;
+
+              {{- if (eq .Values.global.vault.type "hashicorp") }}
+              . /scripts/bevel-vault.sh
+              echo "Getting vault Token..."
+              vaultBevelFunc "init"
+              {{- end }}
+
+              echo "Starting chaincode package and installation process..."
+              
+              # Create package directory
+              PACKAGE_DIR="/package-temp"
+              mkdir -p ${PACKAGE_DIR}
+              
+              # Check if external chaincode package already exists
+              PACKAGE_NAME="${CHAINCODE_NAME}_${CHAINCODE_VERSION}"
+              echo "Checking if package ${PACKAGE_NAME} already exists..."
+              
+              {{- if eq .Values.global.vault.type "hashicorp" }}
+              # Check vault for existing package
+              PACKAGE_EXISTS="false"
+              vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${PACKAGE_NAME}"
+              if [ "$SECRETS_AVAILABLE" = "yes" ]; then
+                echo "Package already exists in vault"
+                PACKAGE_EXISTS="true"
+              fi
+              {{- else }}
+              # Check Kubernetes secret for existing package
+              PACKAGE_EXISTS="false"
+              if kubectl get secret --namespace {{ .Release.Namespace }} ${PACKAGE_NAME}-package >/dev/null 2>&1; then
+                echo "Package already exists in Kubernetes secret"
+                PACKAGE_EXISTS="true"
+              fi
+              {{- end }}
+
+              if [ "$PACKAGE_EXISTS" = "false" ]; then
+                echo "Creating new chaincode package..."
+                
+                # Get chaincode certificates for TLS-enabled external chaincode
+                {{- if .Values.chaincode.tls }}
+                echo "Retrieving chaincode certificates for TLS configuration..."
+                
+                {{- if eq .Values.global.vault.type "hashicorp" }}
+                # Get client certificates from vault
+                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}-{{ .Release.Name }}-certs"
+                if [ "$SECRETS_AVAILABLE" = "yes" ]; then
+                  echo "${VAULT_SECRET}" | jq -r ".ca_crt" > ${PACKAGE_DIR}/ca.crt
+                  echo "${VAULT_SECRET}" | jq -r ".client_crt" > ${PACKAGE_DIR}/client.crt
+                  echo "${VAULT_SECRET}" | jq -r ".client_key" > ${PACKAGE_DIR}/client.key
+                else
+                  echo "Error: Client certificates not found in vault"
+                  exit 1
+                fi
+                {{- else }}
+                # Get client certificates from Kubernetes secret
+                kubectl get secret --namespace {{ .Release.Namespace }} ${CHAINCODE_NAME}-{{ .Release.Name }}-certs -o jsonpath='{.data.cacrt}' | base64 -d > ${PACKAGE_DIR}/ca.crt
+                kubectl get secret --namespace {{ .Release.Namespace }} ${CHAINCODE_NAME}-{{ .Release.Name }}-certs -o jsonpath='{.data.clientcrt}' | base64 -d > ${PACKAGE_DIR}/client.crt
+                kubectl get secret --namespace {{ .Release.Namespace }} ${CHAINCODE_NAME}-{{ .Release.Name }}-certs -o jsonpath='{.data.clientkey}' | base64 -d > ${PACKAGE_DIR}/client.key
+                {{- end }}
+                
+                # Create connection.json with TLS
+                echo "Creating connection.json with TLS configuration..."
+                cd ${PACKAGE_DIR}
+                jq -n \
+                  --arg address "${CHAINCODE_ADDRESS}" \
+                  --arg client_key "$(cat client.key)" \
+                  --arg client_cert "$(cat client.crt)" \
+                  --arg root_cert "$(cat ca.crt)" \
+                  '{
+                    "address": $address,
+                    "dial_timeout": "10s",
+                    "tls_required": true,
+                    "client_auth_required": true,
+                    "client_key": $client_key,
+                    "client_cert": $client_cert,
+                    "root_cert": $root_cert
+                  }' > connection.json
+                {{- else }}
+                # Create connection.json without TLS
+                echo "Creating connection.json without TLS..."
+                cd ${PACKAGE_DIR}
+                jq -n \
+                  --arg address "${CHAINCODE_ADDRESS}" \
+                  '{
+                    "address": $address,
+                    "dial_timeout": "10s",
+                    "tls_required": false,
+                    "client_auth_required": false,
+                    "client_key": "",
+                    "client_cert": "",
+                    "root_cert": ""
+                  }' > connection.json
+                {{- end }}
+                
+                # Create metadata.json
+                echo "Creating metadata.json..."
+                echo "{\"path\":\"\",\"type\":\"external\",\"label\":\"${PACKAGE_NAME}\"}" > metadata.json
+                
+                # Package the chaincode
+                echo "Packaging chaincode..."
+                tar cfz code.tar.gz connection.json
+                tar cfz ${PACKAGE_NAME}.tgz code.tar.gz metadata.json
+                
+                # Verify package was created
+                if [ ! -f "${PACKAGE_NAME}.tgz" ]; then
+                  echo "Error: Package file was not created"
+                  exit 1
+                fi
+                
+                echo "Package created successfully: ${PACKAGE_NAME}.tgz"

@@ -8,44 +8,51 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: cc-{{ $.Values.chaincode.name }}
-  namespace: {{ $.Values.metadata.namespace }}
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
   labels:
-    name: cc-{{ $.Values.chaincode.name }}
-    app.kubernetes.io/name: cc-{{ $.Values.chaincode.name }}
-    helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    {{- include "labels.custom" . | nindent 2 }}
-    {{- include "labels.deployment" . | nindent 2 }}
+    name: {{ .Release.Name }}
+    app.kubernetes.io/name: {{ .Release.Name }}
+    app.kubernetes.io/component: fabric
+    app.kubernetes.io/part-of: {{ template "fabric-external-chaincode.fullname" . }}
+    app.kubernetes.io/namespace: {{ .Release.Namespace }}
+    app.kubernetes.io/release: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: helm
+    {{- include "labels.deployment" . | nindent 4 }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: cc-{{ $.Values.chaincode.name }}
-      app.kubernetes.io/name: cc-{{ $.Values.chaincode.name }}
-      helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      app: {{ .Release.Name }}
+      app.kubernetes.io/name: {{ .Release.Name }}
+      app.kubernetes.io/component: fabric
+      app.kubernetes.io/part-of: {{ template "fabric-external-chaincode.fullname" . }}
+      app.kubernetes.io/namespace: {{ .Release.Namespace }}
+      app.kubernetes.io/release: {{ .Release.Name }}
+      app.kubernetes.io/managed-by: helm
   template:
     metadata:
       labels:
-        app: cc-{{ $.Values.chaincode.name }}
-        app.kubernetes.io/name: cc-{{ $.Values.chaincode.name }}
-        helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version | replace "+" "_" }}
-        app.kubernetes.io/instance: {{ .Release.Name }}
-        {{- include "labels.deployment" . | nindent 6 }}
+        app: {{ .Release.Name }}
+        app.kubernetes.io/name: {{ .Release.Name }}
+        app.kubernetes.io/component: fabric
+        app.kubernetes.io/part-of: {{ template "fabric-external-chaincode.fullname" . }}
+        app.kubernetes.io/namespace: {{ .Release.Namespace }}
+        app.kubernetes.io/release: {{ .Release.Name }}
+        app.kubernetes.io/managed-by: helm
+        {{- include "labels.deployment" . | nindent 8 }}
     spec:   
-      serviceAccountName: {{ $.Values.vault.serviceaccountname }}
-      {{- if .Values.vault.imagesecretname }}
+      serviceAccountName: {{ .Values.global.serviceAccountName }}
+      {{- if .Values.image.pullSecret }}
       imagePullSecrets:
-        - name: {{ $.Values.vault.imagesecretname }}
+        - name: {{ .Values.image.pullSecret }}
       {{- end }}
     {{ if .Values.chaincode.tls }}
       volumes:
-      {{ if .Values.vault.tls  }}
+      {{ if .Values.global.vault.tls  }}
       - name: vaultca
         secret:
-          secretName: {{ $.Values.vault.tls }}
+          secretName: {{ .Values.global.vault.tls }}
           items:
           - key: ca.crt.pem
             path: ca-certificates.crt
@@ -58,49 +65,94 @@ spec:
           name: bevel-vault-script
       initContainers:
       - name: certificates-init
-        image: {{ $.Values.metadata.images.alpineutils }}
+        image: {{ .Values.image.alpineutils }}
         imagePullPolicy: IfNotPresent
         env:
         - name: VAULT_ADDR
-          value: {{ $.Values.vault.address }}
+          value: {{ .Values.global.vault.address }}
+        - name: VAULT_SECRET_ENGINE
+          value: "{{ .Values.global.vault.secretEngine }}"
+        - name: VAULT_SECRET_PREFIX
+          value: "{{ .Values.global.vault.secretPrefix }}"
         - name: KUBERNETES_AUTH_PATH
-          value: {{ $.Values.vault.authpath }}
+          value: {{ .Values.global.vault.authPath }}
         - name: VAULT_APP_ROLE
-          value: {{ $.Values.vault.role }}
-        - name: VAULT_CHAINCODE_SECRET_PREFIX
-          value: "{{ $.Values.vault.chaincodesecretprefix }}"
+          value: {{ .Values.global.vault.role }}
         - name: MOUNT_PATH
           value: /secret
-        - name: NETWORK_VERSION
-          value: "{{ $.Values.metadata.network.version }}"
         - name: CHAINCODE_TLS_ENABLED
-          value: "{{ $.Values.chaincode.tls }}"
+          value: "{{ .Values.chaincode.tls }}"
         - name: VAULT_TYPE
-          value: "{{ $.Values.vault.type }}"
+          value: "{{ .Values.global.vault.type }}"
         command: ["sh", "-c"]
         args:
         - |-
           #!/usr/bin/env sh
+{{- if eq .Values.global.vault.type "hashicorp" }}
           . /scripts/bevel-vault.sh
 
-          # Calling a function to retrieve the vault token.
           vaultBevelFunc "init"
+          function getChaincodeTlsSecret {
+            KEY=$1-xxx
+          
+            echo "Getting chaincode certificates from Vault"
+            vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/peers/${KEY}"
+            if [ "$SECRETS_AVAILABLE" == "yes" ]
+            then
+              CACERT=$(echo ${VAULT_SECRET} | jq -r '.["ca.crt"]')
+              CLIENT_CERT=$(echo ${VAULT_SECRET} | jq -r '.["client.crt"]')
+              CLIENT_KEY=$(echo ${VAULT_SECRET} | jq -r '.["client.key"]')
 
-          if [ "${CHAINCODE_TLS_ENABLED}" == "true" ]; then
-            echo "Getting chaincode certificates from Vault using key ${VAULT_CHAINCODE_SECRET_PREFIX}"
-            vaultBevelFunc "readJson" "${VAULT_CHAINCODE_SECRET_PREFIX}"
-            
-            CACERT=$(echo ${VAULT_SECRET} | jq -r '.["ca.crt"]')
-            CLIENT_CERT=$(echo ${VAULT_SECRET} | jq -r '.["client.crt"]')
-            CLIENT_KEY=$(echo ${VAULT_SECRET} | jq -r '.["client.key"]')
-
+              echo "${CACERT}" > ${MOUNT_PATH}/ca.crt
+              echo "${CLIENT_CERT}" > ${MOUNT_PATH}/client.crt
+              echo "${CLIENT_KEY}" > ${MOUNT_PATH}/client.key
+              CC_TLS_SECRET=true
+            else
+              CC_TLS_SECRET=false
+            fi
+          }
+{{- else }}
+          function getChaincodeTlsSecret {
+            KEY=$1-xxx
+            KUBENETES_SECRET=$(kubectl get secret ${KEY} --namespace {{ .Release.Namespace }} -o json)
+            if  [ "$KUBENETES_SECRET" = "" ]; then
+              CC_TLS_SECRET=false
+            else
+              TLS_CA_CERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.cacrt'  | base64 -d)
+              TLS_SERVER_CERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.servercrt'  | base64 -d)
+              TLS_SERVER_KEY=$(echo ${KUBENETES_SECRET} | jq -r '.data.serverkey'  | base64 -d)
+              
+              echo "${TLS_CA_CERT}" > ${MOUNT_PATH}/ca.crt
+              echo "${TLS_SERVER_CERT}" > ${MOUNT_PATH}/server.crt
+              echo "${TLS_SERVER_KEY}" > ${MOUNT_PATH}/server.key
+              CC_TLS_SECRET=true
+            fi
+          }
+{{- end }}
+          COUNTER=1
+          while [ "$COUNTER" -le {{ .Values.chaincode.healthCheck.retries }} ]
+          do
             mkdir -p ${MOUNT_PATH}
-            echo "${CACERT}" > ${MOUNT_PATH}/ca.crt
-            echo "${CLIENT_CERT}" > ${MOUNT_PATH}/client.crt
-            echo "${CLIENT_KEY}" > ${MOUNT_PATH}/client.key
+            getChaincodeTlsSecret ${PEER_NAME}
+
+            if [ "$CC_TLS_SECRET" = "true" ]
+            then
+              echo "Chaincode certificates have been obtained correctly"
+              break
+            else
+              echo "Chaincode certificates have not been obtained, sleeping for {{ .Values.chaincode.healthCheck.sleepTimeAfterError }}"
+              sleep {{ .Values.chaincode.healthCheck.sleepTimeAfterError }}
+              COUNTER=`expr "$COUNTER" + 1`
+            fi
+          done
+
+          if [ "$COUNTER" -gt {{ .Values.chaincode.healthCheck.retries }} ]
+          then
+            echo "Retry attempted `expr $COUNTER - 1` times, The peer certificates have not been obtained."
+            exit 1
           fi
         volumeMounts:
-        {{ if .Values.vault.tls  }}
+        {{ if .Values.global.vault.tls  }}
         - name: vaultca
           mountPath: "/etc/ssl/certs/"
           readOnly: true
@@ -112,29 +164,29 @@ spec:
           subPath: bevel-vault.sh
     {{ end }}
       containers:
-        - image: {{ $.Values.metadata.images.external_chaincode }}
-          name: "{{ $.Values.chaincode.name }}-{{ $.Values.chaincode.version }}"
+        - name: chaincode
+          image: {{ .Values.image.external_chaincode }}
           imagePullPolicy: Always
           env:
             - name: CHAINCODE_ID
-              value: "{{ $.Values.chaincode.ccid }}"
+              value: "{{ .Values.chaincode.ccid }}"
             - name: CHAINCODE_SERVER_ADDRESS
-              value: "0.0.0.0:9999"
+              value: "0.0.0.0:7052"
             - name: CHAINCODE_TLS_DISABLED
-              value: "{{ not $.Values.chaincode.tls }}"
-            {{ if .Values.chaincode.tls }}
+              value: "{{ not .Values.chaincode.tls }}"
+          {{ if .Values.chaincode.tls }}
             - name: CHAINCODE_TLS_KEY
-              value: "{{ $.Values.chaincode.crypto_mount_path }}/client.key"
+              value: "{{ .Values.chaincode.crypto_mount_path }}/client.key"
             - name: CHAINCODE_TLS_CERT
-              value: "{{ $.Values.chaincode.crypto_mount_path }}/client.crt"
+              value: "{{ .Values.chaincode.crypto_mount_path }}/client.crt"
             - name: CHAINCODE_CLIENT_CA_CERT
-              value: "{{ $.Values.chaincode.crypto_mount_path }}/ca.crt"
-            {{ end }}
+              value: "{{ .Values.chaincode.crypto_mount_path }}/ca.crt"
+          {{ end }}
           ports:
-            - containerPort: 9999
+            - containerPort: 7052
           {{ if .Values.chaincode.tls }}
           volumeMounts:
           - name: certificates
-            mountPath: {{ $.Values.chaincode.crypto_mount_path }}
+            mountPath: {{ .Values.chaincode.crypto_mount_path }}
             readOnly: true
           {{ end }}
