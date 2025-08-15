@@ -71,17 +71,33 @@ image:
   #Eg. alpineUtils: ghcr.io/hyperledger/bevel-alpine:latest
   alpineutils: ghcr.io/hyperledger/bevel-alpine:latest
   catools: ghcr.io/hyperledger/bevel-fabric-ca:latest
+  fabrictools: ghcr.io/hyperledger/bevel-fabric-tools
   #Provide the secret to use if private repository
   #Eg. pullSecret: regcred
   pullSecret:
+
+peer:
+  #Provide the name of the peer as per deployment yaml.
+  #Eg. name: peer0
+  name: peer0
+  #Provide the address of the peer who creates the channel and port to be mentioned is grpc cluster IP port
+  #Eg. address: peer0.org1-net:7051
+  address: peer0.org1-net:7051
+  #Provide the localmspid for organization
+  #Eg. localmspid: Org1MSP
+  localmspid: Org1MSP
+  #Provide the loglevel for organization's peer
+  #Eg. loglevel: info
+  loglevel: info
+  #Provide the value for tlsstatus to be true or false for organization's peer
+  #Eg. tlsstatus: true
+  tlsstatus: true
 
 chaincode:
   # Chaincode name eg. marbles
   name: example
   # Chaincode version eg. 1
   version: 1
-  # Chaincode ID generated after chaincode is installed eg. marbles:e45t6jtkwefweti34itjrefwe
-  ccid: "xxx111"
   # Path in the chaincode server container where the crypto needs to be mounted eg. /crypto
   crypto_mount_path: "/secrets"
   # if tls is disabled or not | BOOLEAN | eg. true

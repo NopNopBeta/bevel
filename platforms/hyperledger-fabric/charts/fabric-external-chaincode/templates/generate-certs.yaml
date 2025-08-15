@@ -61,9 +61,9 @@ spec:
           - name: CHAINCODE_NAME
             value: {{ .Values.chaincode.name }}
           - name: CHAINCODE_VERSION
-            value: {{ .Values.chaincode.version }}
+            value: "{{ .Values.chaincode.version }}"
           - name: REFRESH_CERT_VALUE
-            value: {{ .Values.certs.refreshCertValue }}
+            value: "{{ .Values.certs.refreshCertValue }}"
           - name: OUTPUT_PATH
             value: "/crypto-config"
           {{- if eq .Values.global.vault.type "hashicorp" }}
@@ -85,7 +85,7 @@ spec:
             - |
               . /scripts/package-manager.sh
               # Define the packages to install
-              packages_to_install="curl"
+              packages_to_install="curl jq"
               install_packages "$packages_to_install"
               # Download kubectl binary
               curl -LO https://storage.googleapis.com/kubernetes-release/release/v1.27.0/bin/linux/amd64/kubectl;

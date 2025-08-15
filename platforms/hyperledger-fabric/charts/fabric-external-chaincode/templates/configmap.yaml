@@ -10,6 +10,10 @@ metadata:
     app.kubernetes.io/namespace: {{ .Release.Namespace }}
     app.kubernetes.io/release: {{ .Release.Name }}
     app.kubernetes.io/managed-by: helm
+  annotations:
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-delete-policy: "before-hook-creation"
 data:
   generate-crypto-chaincode-peer.sh: |
     #!/bin/bash
@@ -195,6 +199,10 @@ metadata:
     app.kubernetes.io/namespace: {{ .Release.Namespace }}
     app.kubernetes.io/release: {{ .Release.Name }}
     app.kubernetes.io/managed-by: helm
+  annotations:
+    helm.sh/hook-weight: "-10"
+    helm.sh/hook: "pre-install,pre-upgrade"
+    helm.sh/hook-delete-policy: "before-hook-creation"
 data:
   store-vault-server.sh: |-
     #!/bin/bash
@@ -476,13 +484,6 @@ data:
       echo "${USER} certificates are successfully stored in both Vault and Kubernetes."
     }
 
-    # Wait for peer certificates to be generated
-    echo "Waiting for peer certificates to be generated..."
-    while [ ! -f /crypto-config/${ID_NAME}-certs-generated ]; do
-      echo "Waiting for certificates..."
-      sleep 5
-    done
-    
-    echo "Certificates found, proceeding with storage..."
+    echo "Proceeding with storage of certificates..."
     saveChaincodeSecrets "${ID_NAME}@${COMPONENT_NAME}"
 {{- end }}

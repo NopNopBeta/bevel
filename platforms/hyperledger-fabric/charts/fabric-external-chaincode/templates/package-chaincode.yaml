@@ -56,7 +56,7 @@ spec:
       {{- end }}
       containers:
         - name: package-chaincode
-          image: {{ .Values.image.fabrictools }}
+          image: {{ .Values.image.fabrictools }}:{{ .Values.global.version }}
           imagePullPolicy: IfNotPresent
           env:
           - name: CHAINCODE_NAME
@@ -78,9 +78,9 @@ spec:
           - name: COMPONENT_NAME
             value: "{{ .Release.Namespace }}"
           - name: ORG_NAME
-            value: "{{ .Values.peer.localmspid | lower | replace "msp" "" }}"
+            value: "{{ .Values.certs.orgData.orgName }}"
           - name: FABRIC_LOGGING_SPEC
-            value: "{{ .Values.peer.loglevel | default "info" }}"
+            value: "{{ .Values.peer.loglevel }}"
           - name: CORE_PEER_TLS_ENABLED
             value: "{{ .Values.peer.tlsstatus }}"
           - name: CORE_PEER_LOCALMSPID
@@ -148,7 +148,7 @@ spec:
               {{- if eq .Values.global.vault.type "hashicorp" }}
               # Check vault for existing package
               PACKAGE_EXISTS="false"
-              vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package/v${CHAINCODE_VERSION}"
+              vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package"
               if [ "$SECRETS_AVAILABLE" = "yes" ]; then
                 echo "Package already exists in vault"
                 PACKAGE_EXISTS="true"
@@ -270,7 +270,7 @@ spec:
                 # Store package in vault or Kubernetes secret
                 {{- if eq .Values.global.vault.type "hashicorp" }}
                 echo "Storing package in vault..."
-                PACKAGE_VAULT_ADDR="${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package/v${CHAINCODE_VERSION}"
+                PACKAGE_VAULT_ADDR="${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package"
                 PACKAGE_B64=$(cat ${PACKAGE_NAME}.tgz | base64 -w 0)
                 echo "{\"data\":{\"package-base64\":\"${PACKAGE_B64}\"}}" > package_payload.json
                 vaultBevelFunc 'write' "${PACKAGE_VAULT_ADDR}" 'package_payload.json'
@@ -289,26 +289,39 @@ spec:
               
               # Check if chaincode is already installed
               echo "Checking if chaincode is already installed..."
-              PEER_POD=$(kubectl get pods -n {{ .Release.Namespace }} -l app={{ .Values.peer.name }} -o jsonpath='{.items[0].metadata.name}')
-              if [ -z "$PEER_POD" ]; then
-                echo "Error: Peer pod not found"
-                exit 1
-              fi
               
-              # Check installed chaincodes
-              INSTALLED_CC=$(kubectl exec -n {{ .Release.Namespace }} $PEER_POD -c {{ .Values.peer.name }} -- \
-                peer lifecycle chaincode queryinstalled -O json | \
+              # Check installed chaincodes using peer CLI directly
+              INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | \
                 jq -r --arg label "${PACKAGE_NAME}" '.installed_chaincodes[]? | select(.label==$label) | .package_id' || echo "")
               
               if [ -n "$INSTALLED_CC" ]; then
                 echo "Chaincode ${PACKAGE_NAME} is already installed with package ID: $INSTALLED_CC"
+                
+                # Store the package ID for future reference if not already stored
+                {{- if eq .Values.global.vault.type "hashicorp" }}
+                # Check if package ID already exists in vault
+                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id"
+                if [ "$SECRETS_AVAILABLE" != "yes" ]; then
+                  echo "Storing existing package ID in vault..."
+                  echo "{\"data\":{\"package_id\":\"${INSTALLED_CC}\"}}" > package_id_payload.json
+                  vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id" 'package_id_payload.json'
+                fi
+                {{- else }}
+                # Check if package ID secret already exists
+                if ! kubectl get secret --namespace {{ .Release.Namespace }} ${PACKAGE_NAME}-package-id >/dev/null 2>&1; then
+                  echo "Storing existing package ID in Kubernetes secret..."
+                  kubectl create secret generic ${PACKAGE_NAME}-package-id \
+                    --namespace {{ .Release.Namespace }} \
+                    --from-literal=package_id="${INSTALLED_CC}"
+                fi
+                {{- end }}
               else
                 echo "Installing chaincode package..."
                 
-                # Get the package from storage and install
+                # Get the package from storage
                 {{- if eq .Values.global.vault.type "hashicorp" }}
                 # Get package from vault
-                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package/v${CHAINCODE_VERSION}"
+                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package"
                 if [ "$SECRETS_AVAILABLE" = "yes" ]; then
                   echo "${VAULT_SECRET}" | jq -r ".\"package-base64\"" | base64 -d > /tmp/${PACKAGE_NAME}.tgz
                 else
@@ -320,16 +333,19 @@ spec:
                 kubectl get secret --namespace {{ .Release.Namespace }} ${PACKAGE_NAME}-package -o jsonpath='{.data.package}' | base64 -d > /tmp/${PACKAGE_NAME}.tgz
                 {{- end }}
                 
-                # Copy package to peer pod and install
-                kubectl cp /tmp/${PACKAGE_NAME}.tgz {{ .Release.Namespace }}/$PEER_POD:/opt/gopath/src/github.com/hyperledger/fabric/${PACKAGE_NAME}.tgz -c {{ .Values.peer.name }}
+                # Verify package file exists
+                if [ ! -f "/tmp/${PACKAGE_NAME}.tgz" ]; then
+                  echo "Error: Package file not found after retrieval"
+                  exit 1
+                fi
                 
-                # Install the chaincode
-                kubectl exec -n {{ .Release.Namespace }} $PEER_POD -c {{ .Values.peer.name }} -- \
-                  peer lifecycle chaincode install ${PACKAGE_NAME}.tgz
+                # Install the chaincode using peer CLI directly
+                echo "Installing chaincode package: ${PACKAGE_NAME}.tgz"
+                peer lifecycle chaincode install /tmp/${PACKAGE_NAME}.tgz
                 
                 # Verify installation
-                INSTALLED_CC=$(kubectl exec -n {{ .Release.Namespace }} $PEER_POD -c {{ .Values.peer.name }} -- \
-                  peer lifecycle chaincode queryinstalled -O json | \
+                echo "Verifying chaincode installation..."
+                INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | \
                   jq -r --arg label "${PACKAGE_NAME}" '.installed_chaincodes[]? | select(.label==$label) | .package_id')
                 
                 if [ -n "$INSTALLED_CC" ]; then
@@ -337,14 +353,19 @@ spec:
                   
                   # Store the package ID for future reference
                   {{- if eq .Values.global.vault.type "hashicorp" }}
+                  echo "Storing package ID in vault..."
                   echo "{\"data\":{\"package_id\":\"${INSTALLED_CC}\"}}" > package_id_payload.json
-                  vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/package_id/v${CHAINCODE_VERSION}" 'package_id_payload.json'
+                  vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id" 'package_id_payload.json'
                   {{- else }}
+                  echo "Storing package ID in Kubernetes secret..."
                   kubectl create secret generic ${PACKAGE_NAME}-package-id \
                     --namespace {{ .Release.Namespace }} \
-                    --from-literal=package_id="${INSTALLED_CC}" \
-                    --dry-run=client -o yaml | kubectl apply -f -
+                    --from-literal=package_id="${INSTALLED_CC}"
                   {{- end }}
+                  
+                  # Display installed chaincodes for verification
+                  echo "Current installed chaincodes:"
+                  peer lifecycle chaincode queryinstalled
                 else
                   echo "Error: Chaincode installation failed"
                   exit 1

@@ -47,27 +47,38 @@ spec:
       imagePullSecrets:
         - name: {{ .Values.image.pullSecret }}
       {{- end }}
-    {{ if .Values.chaincode.tls }}
       volumes:
-      {{ if .Values.global.vault.tls  }}
+      {{- if .Values.global.vault.tls }}
       - name: vaultca
         secret:
           secretName: {{ .Values.global.vault.tls }}
           items:
           - key: ca.crt.pem
             path: ca-certificates.crt
-      {{ end  }}
+      {{- end }}
       - name: certificates
         emptyDir:
           medium: Memory
       - name: scripts-volume
         configMap:
           name: bevel-vault-script
+      - name: package-manager
+        configMap:
+          name: package-manager
       initContainers:
+      {{- if .Values.chaincode.tls }}
+      # Init container to retrieve TLS certificates for chaincode server
       - name: certificates-init
         image: {{ .Values.image.alpineutils }}
         imagePullPolicy: IfNotPresent
         env:
+        - name: CHAINCODE_NAME
+          value: "{{ .Values.chaincode.name }}"
+        - name: CHAINCODE_VERSION
+          value: "{{ .Values.chaincode.version }}"
+        - name: COMPONENT_NAME
+          value: "{{ .Release.Namespace }}"
+        {{- if eq .Values.global.vault.type "hashicorp" }}
         - name: VAULT_ADDR
           value: {{ .Values.global.vault.address }}
         - name: VAULT_SECRET_ENGINE
@@ -78,32 +89,41 @@ spec:
           value: {{ .Values.global.vault.authPath }}
         - name: VAULT_APP_ROLE
           value: {{ .Values.global.vault.role }}
-        - name: MOUNT_PATH
-          value: /secret
-        - name: CHAINCODE_TLS_ENABLED
-          value: "{{ .Values.chaincode.tls }}"
         - name: VAULT_TYPE
           value: "{{ .Values.global.vault.type }}"
+        {{- if .Values.global.vault.tls }}
+        - name: VAULT_CACERT
+          value: /opt/vault/tls/ca-certificates.crt
+        {{- else }}
+        - name: VAULT_SKIP_VERIFY
+          value: "true"
+        {{- end }}
+        {{- end }}
+        - name: MOUNT_PATH
+          value: /secret
         command: ["sh", "-c"]
         args:
         - |-
           #!/usr/bin/env sh
-{{- if eq .Values.global.vault.type "hashicorp" }}
-          . /scripts/bevel-vault.sh
-
-          vaultBevelFunc "init"
-          function getChaincodeTlsSecret {
-            KEY=$1-xxx
+          set -e
           
-            echo "Getting chaincode certificates from Vault"
-            vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/peers/${KEY}"
+          {{- if eq .Values.global.vault.type "hashicorp" }}
+          . /scripts/bevel-vault.sh
+          vaultBevelFunc "init"
+          
+          function getChaincodeTlsSecret {
+            SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}@${COMPONENT_NAME}"
+            TLS_KEY="${SERVER_USER}-tls"
+            
+            echo "Getting chaincode server TLS certificates from Vault for ${TLS_KEY}"
+            vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${TLS_KEY}"
             if [ "$SECRETS_AVAILABLE" == "yes" ]
             then
-              CACERT=$(echo ${VAULT_SECRET} | jq -r '.["ca.crt"]')
-              CLIENT_CERT=$(echo ${VAULT_SECRET} | jq -r '.["client.crt"]')
-              CLIENT_KEY=$(echo ${VAULT_SECRET} | jq -r '.["client.key"]')
+              CA_CERT=$(echo ${VAULT_SECRET} | jq -r '.["ca_crt"]' | sed 's/\\n/\n/g')
+              CLIENT_CERT=$(echo ${VAULT_SECRET} | jq -r '.["client_crt"]' | sed 's/\\n/\n/g')
+              CLIENT_KEY=$(echo ${VAULT_SECRET} | jq -r '.["client_key"]' | sed 's/\\n/\n/g')
 
-              echo "${CACERT}" > ${MOUNT_PATH}/ca.crt
+              echo "${CA_CERT}" > ${MOUNT_PATH}/ca.crt
               echo "${CLIENT_CERT}" > ${MOUNT_PATH}/client.crt
               echo "${CLIENT_KEY}" > ${MOUNT_PATH}/client.key
               CC_TLS_SECRET=true
@@ -111,82 +131,89 @@ spec:
               CC_TLS_SECRET=false
             fi
           }
-{{- else }}
+          {{- else }}
           function getChaincodeTlsSecret {
-            KEY=$1-xxx
-            KUBENETES_SECRET=$(kubectl get secret ${KEY} --namespace {{ .Release.Namespace }} -o json)
-            if  [ "$KUBENETES_SECRET" = "" ]; then
-              CC_TLS_SECRET=false
-            else
-              TLS_CA_CERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.cacrt'  | base64 -d)
-              TLS_SERVER_CERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.servercrt'  | base64 -d)
-              TLS_SERVER_KEY=$(echo ${KUBENETES_SECRET} | jq -r '.data.serverkey'  | base64 -d)
+            SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}@${COMPONENT_NAME}"
+            TLS_KEY="${SERVER_USER}-tls"
+            
+            echo "Getting chaincode server TLS certificates from Kubernetes secret ${TLS_KEY}"
+            if kubectl get secret ${TLS_KEY} --namespace {{ .Release.Namespace }} >/dev/null 2>&1; then
+              TLS_CA_CERT=$(kubectl get secret ${TLS_KEY} --namespace {{ .Release.Namespace }} -o jsonpath='{.data.cacrt}' | base64 -d)
+              TLS_CLIENT_CERT=$(kubectl get secret ${TLS_KEY} --namespace {{ .Release.Namespace }} -o jsonpath='{.data.clientcrt}' | base64 -d)
+              TLS_CLIENT_KEY=$(kubectl get secret ${TLS_KEY} --namespace {{ .Release.Namespace }} -o jsonpath='{.data.clientkey}' | base64 -d)
               
               echo "${TLS_CA_CERT}" > ${MOUNT_PATH}/ca.crt
-              echo "${TLS_SERVER_CERT}" > ${MOUNT_PATH}/server.crt
-              echo "${TLS_SERVER_KEY}" > ${MOUNT_PATH}/server.key
+              echo "${TLS_CLIENT_CERT}" > ${MOUNT_PATH}/client.crt
+              echo "${TLS_CLIENT_KEY}" > ${MOUNT_PATH}/client.key
               CC_TLS_SECRET=true
+            else
+              CC_TLS_SECRET=false
             fi
           }
-{{- end }}
+          {{- end }}
+          
           COUNTER=1
-          while [ "$COUNTER" -le {{ .Values.chaincode.healthCheck.retries }} ]
+          while [ "$COUNTER" -le {{ .Values.chaincode.healthCheck.retries | default 5 }} ]
           do
             mkdir -p ${MOUNT_PATH}
-            getChaincodeTlsSecret ${PEER_NAME}
+            getChaincodeTlsSecret
 
             if [ "$CC_TLS_SECRET" = "true" ]
             then
-              echo "Chaincode certificates have been obtained correctly"
+              echo "Chaincode server TLS certificates have been obtained correctly"
               break
             else
-              echo "Chaincode certificates have not been obtained, sleeping for {{ .Values.chaincode.healthCheck.sleepTimeAfterError }}"
-              sleep {{ .Values.chaincode.healthCheck.sleepTimeAfterError }}
+              echo "Chaincode server TLS certificates have not been obtained, sleeping for {{ .Values.chaincode.healthCheck.sleepTimeAfterError | default 30 }}"
+              sleep {{ .Values.chaincode.healthCheck.sleepTimeAfterError | default 30 }}
               COUNTER=`expr "$COUNTER" + 1`
             fi
           done
 
-          if [ "$COUNTER" -gt {{ .Values.chaincode.healthCheck.retries }} ]
+          if [ "$COUNTER" -gt {{ .Values.chaincode.healthCheck.retries | default 5 }} ]
           then
-            echo "Retry attempted `expr $COUNTER - 1` times, The peer certificates have not been obtained."
+            echo "Retry attempted `expr $COUNTER - 1` times, The chaincode server TLS certificates have not been obtained."
             exit 1
           fi
         volumeMounts:
-        {{ if .Values.global.vault.tls  }}
+        {{- if .Values.global.vault.tls }}
         - name: vaultca
           mountPath: "/etc/ssl/certs/"
           readOnly: true
-        {{ end }}
+        {{- end }}
         - name: certificates
           mountPath: /secret
         - name: scripts-volume
           mountPath: /scripts/bevel-vault.sh
           subPath: bevel-vault.sh
-    {{ end }}
+      {{- end }}
+      
       containers:
         - name: chaincode
           image: {{ .Values.image.external_chaincode }}
           imagePullPolicy: Always
           env:
             - name: CHAINCODE_ID
-              value: "{{ .Values.chaincode.ccid }}"
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ .Values.chaincode.name }}_{{ .Values.chaincode.version }}-package-id"
+                  key: package_id
             - name: CHAINCODE_SERVER_ADDRESS
               value: "0.0.0.0:7052"
             - name: CHAINCODE_TLS_DISABLED
               value: "{{ not .Values.chaincode.tls }}"
-          {{ if .Values.chaincode.tls }}
+            {{- if .Values.chaincode.tls }}
             - name: CHAINCODE_TLS_KEY
-              value: "{{ .Values.chaincode.crypto_mount_path }}/client.key"
+              value: "{{ .Values.chaincode.crypto_mount_path | default "/crypto" }}/client.key"
             - name: CHAINCODE_TLS_CERT
-              value: "{{ .Values.chaincode.crypto_mount_path }}/client.crt"
+              value: "{{ .Values.chaincode.crypto_mount_path | default "/crypto" }}/client.crt"
             - name: CHAINCODE_CLIENT_CA_CERT
-              value: "{{ .Values.chaincode.crypto_mount_path }}/ca.crt"
-          {{ end }}
+              value: "{{ .Values.chaincode.crypto_mount_path | default "/crypto" }}/ca.crt"
+            {{- end }}
           ports:
             - containerPort: 7052
-          {{ if .Values.chaincode.tls }}
+          {{- if .Values.chaincode.tls }}
           volumeMounts:
           - name: certificates
-            mountPath: {{ .Values.chaincode.crypto_mount_path }}
+            mountPath: {{ .Values.chaincode.crypto_mount_path | default "/crypto" }}
             readOnly: true
-          {{ end }}
+          {{- end }}
