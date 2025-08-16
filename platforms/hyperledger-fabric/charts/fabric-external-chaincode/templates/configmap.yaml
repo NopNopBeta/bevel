@@ -219,10 +219,7 @@ data:
 
     formatCertificate () {
       NAME="${1##*/}"
-      while IFS= read -r line
-      do
-        printf "%s\n" "$line"
-      done < "${1}" > "${2}/${NAME}.txt"
+      base64 -w 0 "${1}" > "${2}/${NAME}.txt"
     }
     
     function saveServerSecrets {
@@ -361,10 +358,7 @@ data:
 
     formatCertificate () {
       NAME="${1##*/}"
-      while IFS= read -r line
-      do
-        printf "%s\n" "$line"
-      done < "${1}" > "${2}/${NAME}.txt"
+      base64 -w 0 "${1}" > "${2}/${NAME}.txt"
     }
     
     function saveChaincodeSecrets {

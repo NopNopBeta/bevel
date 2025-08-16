@@ -119,13 +119,13 @@ spec:
             vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${TLS_KEY}"
             if [ "$SECRETS_AVAILABLE" == "yes" ]
             then
-              CA_CERT=$(echo ${VAULT_SECRET} | jq -r '.["ca_crt"]' | sed 's/\\n/\n/g')
-              CLIENT_CERT=$(echo ${VAULT_SECRET} | jq -r '.["client_crt"]' | sed 's/\\n/\n/g')
-              CLIENT_KEY=$(echo ${VAULT_SECRET} | jq -r '.["client_key"]' | sed 's/\\n/\n/g')
+              CA_CERT=$(echo ${VAULT_SECRET} | jq -r '.["ca_crt"]')
+              CLIENT_CERT=$(echo ${VAULT_SECRET} | jq -r '.["client_crt"]')
+              CLIENT_KEY=$(echo ${VAULT_SECRET} | jq -r '.["client_key"]')
 
-              echo "${CA_CERT}" > ${MOUNT_PATH}/ca.crt
-              echo "${CLIENT_CERT}" > ${MOUNT_PATH}/client.crt
-              echo "${CLIENT_KEY}" > ${MOUNT_PATH}/client.key
+              echo "${CA_CERT}" | base64 -d > ${MOUNT_PATH}/ca.crt
+              echo "${CLIENT_CERT}" | base64 -d > ${MOUNT_PATH}/client.crt
+              echo "${CLIENT_KEY}" | base64 -d > ${MOUNT_PATH}/client.key
               CC_TLS_SECRET=true
             else
               CC_TLS_SECRET=false

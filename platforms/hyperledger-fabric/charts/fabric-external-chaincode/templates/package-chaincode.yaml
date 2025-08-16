@@ -306,9 +306,9 @@ spec:
                 SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}"
                 vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${SERVER_USER}-tls"
                 if [ "$SECRETS_AVAILABLE" = "yes" ]; then
-                  echo "${VAULT_SECRET}" | jq -r ".ca_crt" > ${PACKAGE_DIR}/ca.crt
-                  echo "${VAULT_SECRET}" | jq -r ".client_crt" > ${PACKAGE_DIR}/client.crt
-                  echo "${VAULT_SECRET}" | jq -r ".client_key" > ${PACKAGE_DIR}/client.key
+                  echo "${VAULT_SECRET}" | jq -r ".ca_crt" | base64 -d > ${PACKAGE_DIR}/ca.crt
+                  echo "${VAULT_SECRET}" | jq -r ".client_crt" | base64 -d > ${PACKAGE_DIR}/client.crt
+                  echo "${VAULT_SECRET}" | jq -r ".client_key" | base64 -d > ${PACKAGE_DIR}/client.key
                 else
                   echo "Error: Server certificates not found in vault"
                   exit 1
@@ -363,7 +363,7 @@ spec:
                 
                 # Create metadata.json
                 echo "Creating metadata.json..."
-                echo "{\"path\":\"\",\"type\":\"external\",\"label\":\"${PACKAGE_NAME}\"}" > metadata.json
+                echo "{\"type\":\"ccaas\",\"label\":\"${PACKAGE_NAME}\"}" > metadata.json
                 
                 # Package the chaincode
                 echo "Packaging chaincode..."
