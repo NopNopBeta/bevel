@@ -66,6 +66,8 @@ spec:
             value: "{{ .Values.certs.refreshCertValue }}"
           - name: OUTPUT_PATH
             value: "/crypto-config"
+          - name: ORG_NAME
+            value: "{{ .Values.certs.orgData.orgName }}"
           {{- if eq .Values.global.vault.type "hashicorp" }}
           - name: VAULT_ADDR
             value: {{ .Values.global.vault.address }}
@@ -96,6 +98,7 @@ spec:
               vaultBevelFunc "init"
 {{- end }}
               # Get the CA cert from Kubernetes secret
+              mkdir -p ${OUTPUT_PATH}/ca
               kubectl get secret --namespace {{ .Release.Namespace }} fabric-ca-server-certs >/dev/null 2>&1
               if [ $? -eq 0 ]; then
                 LOOKUP_SECRET_RESPONSE=$(kubectl get secret -n {{ .Release.Namespace }} fabric-ca-server-certs -o jsonpath='{.data}');
@@ -142,35 +145,38 @@ spec:
                 fi
               }
               # Check if secrets already exist
-              checkSecrets ${CHAINCODE_NAME}-${CHAINCODE_VERSION}-certs
-              checkSecrets ${CHAINCODE_NAME}-{{ .Release.Name }}-certs
+              checkSecrets ${CHAINCODE_NAME}-${CHAINCODE_VERSION}-tls
+              checkSecrets ${ORG_NAME}-${CHAINCODE_NAME}-tls
 
               echo "Starting certificate generation."
-              if [ ! -e /crypto-config/${CHAINCODE_NAME}-${CHAINCODE_VERSION}-certs-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+              if [ ! -e /crypto-config/${CHAINCODE_NAME}-${CHAINCODE_VERSION}-tls-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
                 # Generate crypto material for chaincode server
                 echo "Need to execute scripts for chaincode ${CHAINCODE_NAME}"
                 cd /root/ca-tools/org 
                 ./generate-crypto-chaincode-server.sh
+                # Save the generated certificates
+                cd /scripts/peer
+                ./store-vault-server.sh
               fi
-
-              # Save the generated certificates
-              cd /scripts/peer
-              ./store-vault-server.sh
               
               # Generate crypto material for chaincode client
               cd /root/ca-tools/org
-              if [ ! -e /crypto-config/${CHAINCODE_NAME}-{{ .Release.Name }}-certs-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
+              if [ ! -e /crypto-config/${ORG_NAME}-${CHAINCODE_NAME}-tls-exists ] || [ "$REFRESH_CERT_VALUE" = "true" ]; then
                 ./generate-crypto-chaincode-peer.sh
+                # Save the generated certificates for peers and users
+                cd /scripts/peer
+                ./store-vault-chaincode.sh
               fi;
-              # Save the generated certificates for peers and users
-              cd /scripts/peer
-              ./store-vault-chaincode.sh
               echo "Certificate generation complete."
           volumeMounts:
           - name: certificates
             mountPath: /crypto-config
           - name: chaincode-scripts
-            mountPath: /root/ca-tools/org
+            mountPath: /root/ca-tools/org/generate-crypto-chaincode-peer.sh
+            subPath: generate-crypto-chaincode-peer.sh
+          - name: chaincode-scripts
+            mountPath: /root/ca-tools/org/generate-crypto-chaincode-server.sh
+            subPath: generate-crypto-chaincode-server.sh
           - name: package-manager
             mountPath: /scripts/package-manager.sh
             subPath: package-manager.sh
@@ -178,5 +184,9 @@ spec:
             mountPath: /scripts/bevel-vault.sh
             subPath: bevel-vault.sh
           - name: store-vault-scripts
-            mountPath: /scripts/peer
+            mountPath: /scripts/peer/store-vault-server.sh
+            subPath: store-vault-server.sh
+          - name: store-vault-scripts
+            mountPath: /scripts/peer/store-vault-chaincode.sh
+            subPath: store-vault-chaincode.sh
 {{- end }}

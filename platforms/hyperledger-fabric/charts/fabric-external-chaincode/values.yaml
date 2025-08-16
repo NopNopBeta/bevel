@@ -83,15 +83,15 @@ peer:
   #Provide the address of the peer who creates the channel and port to be mentioned is grpc cluster IP port
   #Eg. address: peer0.org1-net:7051
   address: peer0.org1-net:7051
-  #Provide the localmspid for organization
-  #Eg. localmspid: Org1MSP
-  localmspid: Org1MSP
-  #Provide the loglevel for organization's peer
-  #Eg. loglevel: info
-  loglevel: info
-  #Provide the value for tlsstatus to be true or false for organization's peer
-  #Eg. tlsstatus: true
-  tlsstatus: true
+  #Provide the localMspId for organization
+  #Eg. localMspId: Org1MSP
+  localMspId: Org1MSP
+  #Provide the logLevel for organization's peer
+  #Eg. logLevel: info
+  logLevel: info
+  #Provide the value for tlsStatus to be true or false for organization's peer
+  #Eg. tlsStatus: true
+  tlsStatus: true
 
 chaincode:
   # Chaincode name eg. marbles
