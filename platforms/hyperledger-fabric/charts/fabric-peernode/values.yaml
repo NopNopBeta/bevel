@@ -115,7 +115,7 @@ image:
   couchdb: ghcr.io/hyperledger/bevel-fabric-couchdb
   #Provide the valid repository for fabric peer
   #Eg. peer: hyperledger/fabric-peer
-  peer: ghcr.io/hyperledger/bevel-fabric-peer
+  peer: hyperledger/fabric-peer
   #Provide the valid image name and version to read certificates from vault server 
   #Eg. alpineUtils: ghcr.io/hyperledger/bevel-alpine:latest
   alpineUtils: ghcr.io/hyperledger/bevel-alpine:latest

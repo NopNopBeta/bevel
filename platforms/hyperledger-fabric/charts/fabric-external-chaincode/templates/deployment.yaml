@@ -112,7 +112,7 @@ spec:
           vaultBevelFunc "init"
           
           function getChaincodeTlsSecret {
-            SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}@${COMPONENT_NAME}"
+            SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}"
             TLS_KEY="${SERVER_USER}-tls"
             
             echo "Getting chaincode server TLS certificates from Vault for ${TLS_KEY}"
@@ -133,7 +133,7 @@ spec:
           }
           {{- else }}
           function getChaincodeTlsSecret {
-            SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}@${COMPONENT_NAME}"
+            SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}"
             TLS_KEY="${SERVER_USER}-tls"
             
             echo "Getting chaincode server TLS certificates from Kubernetes secret ${TLS_KEY}"
@@ -195,7 +195,7 @@ spec:
             - name: CHAINCODE_ID
               valueFrom:
                 secretKeyRef:
-                  name: "{{ .Values.chaincode.name }}_{{ .Values.chaincode.version }}-package-id"
+                  name: "{{ .Values.chaincode.name }}-{{ .Values.chaincode.version }}-package-id"
                   key: package_id
             - name: CHAINCODE_SERVER_ADDRESS
               value: "0.0.0.0:7052"

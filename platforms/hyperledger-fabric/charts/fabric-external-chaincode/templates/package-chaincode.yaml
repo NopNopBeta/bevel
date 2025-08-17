@@ -273,7 +273,7 @@ spec:
               mkdir -p ${PACKAGE_DIR}
               
               # Check if external chaincode package already exists
-              PACKAGE_NAME="${CHAINCODE_NAME}_${CHAINCODE_VERSION}"
+              PACKAGE_NAME="${CHAINCODE_NAME}-${CHAINCODE_VERSION}"
               echo "Checking if package ${PACKAGE_NAME} already exists..."
               
               {{- if eq .Values.global.vault.type "hashicorp" }}
@@ -402,29 +402,27 @@ spec:
               echo "Checking if chaincode is already installed..."
               
               # Check installed chaincodes using peer CLI directly
-              INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | jq '.installed_chaincodes?' | jq --arg CCLABEL "${PACKAGE_NAME}" '.[]? | select(.label==$CCLABEL)')
+              INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | jq '.installed_chaincodes?' | jq --arg CCLABEL "${PACKAGE_NAME}" '.[]? | select(.label==$CCLABEL) | .package_id')
               
               if [ -n "$INSTALLED_CC" ]; then
                 echo "Chaincode ${PACKAGE_NAME} is already installed with package ID: $INSTALLED_CC"
                 
-                # Store the package ID for future reference if not already stored
+                # Store/update the package ID for future reference
                 {{- if eq .Values.global.vault.type "hashicorp" }}
-                # Check if package ID already exists in vault
-                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id"
-                if [ "$SECRETS_AVAILABLE" != "yes" ]; then
                   echo "Storing existing package ID in vault..."
-                  echo "{\"data\":{\"package_id\":\"${INSTALLED_CC}\"}}" > package_id_payload.json
+                  echo "{\"data\":{\"package_id\":${INSTALLED_CC}}}" > package_id_payload.json
                   vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id" 'package_id_payload.json'
-                fi
-                {{- else }}
-                # Check if package ID secret already exists
-                if ! kubectl get secret --namespace {{ .Release.Namespace }} ${PACKAGE_NAME}-package-id >/dev/null 2>&1; then
-                  echo "Storing existing package ID in Kubernetes secret..."
-                  kubectl create secret generic ${PACKAGE_NAME}-package-id \
-                    --namespace {{ .Release.Namespace }} \
-                    --from-literal=package_id="${INSTALLED_CC}"
-                fi
                 {{- end }}
+                # Check if package ID secret already exists
+                kubectl get secret --namespace {{ .Release.Namespace }} ${PACKAGE_NAME}-package-id >/dev/null 2>&1
+                if [ $? -eq 0 ]; then
+                  # Delete the secret if exists
+                  kubectl delete secret --namespace {{ .Release.Namespace }} ${PACKAGE_NAME}-package-id
+                fi
+                echo "Storing existing package ID in Kubernetes secret..."
+                kubectl create secret generic ${PACKAGE_NAME}-package-id \
+                  --namespace {{ .Release.Namespace }} \
+                  --from-literal=package_id=${INSTALLED_CC}
               else
                 echo "Installing chaincode package..."
                 
@@ -448,15 +446,14 @@ spec:
                   echo "Error: Package file not found after retrieval"
                   exit 1
                 fi
-                tail -f /dev/null
+
                 # Install the chaincode using peer CLI directly
                 echo "Installing chaincode package: ${PACKAGE_NAME}.tgz"
                 peer lifecycle chaincode install /tmp/${PACKAGE_NAME}.tgz
                 
                 # Verify installation
                 echo "Verifying chaincode installation..."
-                INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | \
-                  jq -r --arg label "${PACKAGE_NAME}" '.installed_chaincodes[]? | select(.label==$label) | .package_id')
+                INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | jq '.installed_chaincodes?' | jq --arg CCLABEL "${PACKAGE_NAME}" '.[]? | select(.label==$CCLABEL) | .package_id')
                 
                 if [ -n "$INSTALLED_CC" ]; then
                   echo "Chaincode installed successfully with package ID: $INSTALLED_CC"
@@ -464,14 +461,13 @@ spec:
                   # Store the package ID for future reference
                   {{- if eq .Values.global.vault.type "hashicorp" }}
                   echo "Storing package ID in vault..."
-                  echo "{\"data\":{\"package_id\":\"${INSTALLED_CC}\"}}" > package_id_payload.json
+                  echo "{\"data\":{\"package_id\":${INSTALLED_CC}}}" > package_id_payload.json
                   vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id" 'package_id_payload.json'
-                  {{- else }}
+                  {{- end }}
                   echo "Storing package ID in Kubernetes secret..."
                   kubectl create secret generic ${PACKAGE_NAME}-package-id \
                     --namespace {{ .Release.Namespace }} \
-                    --from-literal=package_id="${INSTALLED_CC}"
-                  {{- end }}
+                    --from-literal=package_id=${INSTALLED_CC}
                   
                   # Display installed chaincodes for verification
                   echo "Current installed chaincodes:"
