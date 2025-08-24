@@ -202,11 +202,11 @@ spec:
             - name: CHAINCODE_TLS_DISABLED
               value: "{{ not .Values.chaincode.tls }}"
             {{- if .Values.chaincode.tls }}
-            - name: CHAINCODE_TLS_KEY
+            - name: CORE_CHAINCODE_TLS_KEY_FILE
               value: "{{ .Values.chaincode.crypto_mount_path | default "/crypto" }}/client.key"
-            - name: CHAINCODE_TLS_CERT
+            - name: CORE_CHAINCODE_TLS_CERT_FILE
               value: "{{ .Values.chaincode.crypto_mount_path | default "/crypto" }}/client.crt"
-            - name: CHAINCODE_CLIENT_CA_CERT
+            - name: CORE_CHAINCODE_TLS_CLIENT_CACERT_FILE
               value: "{{ .Values.chaincode.crypto_mount_path | default "/crypto" }}/ca.crt"
             {{- end }}
           ports:

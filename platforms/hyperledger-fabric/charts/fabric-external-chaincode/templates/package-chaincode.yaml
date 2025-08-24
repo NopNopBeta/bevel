@@ -105,11 +105,6 @@ spec:
               TLSCACERTS=$(echo ${VAULT_SECRET} | jq -r '.["tlscacerts"]')
 
               OUTPUT_PATH="${MOUNT_PATH}/admin/msp"
-              mkdir -p ${OUTPUT_PATH}/admincerts
-              mkdir -p ${OUTPUT_PATH}/cacerts
-              mkdir -p ${OUTPUT_PATH}/keystore
-              mkdir -p ${OUTPUT_PATH}/signcerts
-              mkdir -p ${OUTPUT_PATH}/tlscacerts
 
               echo "${ADMINCERT}" >> ${OUTPUT_PATH}/admincerts/admin.crt
               echo "${CACERTS}" >> ${OUTPUT_PATH}/cacerts/ca.crt
@@ -142,18 +137,17 @@ spec:
               ADMIN_TLS_SECRET="false"
             fi
           }
-
+          OUTPUT_PATH="${MOUNT_PATH}/admin/msp"
+          OUTPUT_TLS_PATH="${MOUNT_PATH}/tls"
+          mkdir -p ${OUTPUT_TLS_PATH}
+          mkdir -p ${OUTPUT_PATH}/admincerts
+          mkdir -p ${OUTPUT_PATH}/cacerts
+          mkdir -p ${OUTPUT_PATH}/keystore
+          mkdir -p ${OUTPUT_PATH}/signcerts
+          mkdir -p ${OUTPUT_PATH}/tlscacerts
           COUNTER=1
           while [ "$COUNTER" -le 20 ]
           do
-            OUTPUT_PATH="${MOUNT_PATH}/admin/msp"
-            OUTPUT_TLS_PATH="${MOUNT_PATH}/tls"
-            mkdir -p ${OUTPUT_TLS_PATH}
-            mkdir -p ${OUTPUT_PATH}/admincerts
-            mkdir -p ${OUTPUT_PATH}/cacerts
-            mkdir -p ${OUTPUT_PATH}/keystore
-            mkdir -p ${OUTPUT_PATH}/signcerts
-            mkdir -p ${OUTPUT_PATH}/tlscacerts
             getAdminMspSecret admin-msp
             getAdminTlsSecret admin-tls
 
@@ -175,7 +169,7 @@ spec:
           fi
           {{- else }}
           echo "Non-hashicorp vault not implemented for certificate retrieval"
-          exit 1
+          exit 0
           {{- end }}
         volumeMounts:
         - name: certificates
@@ -203,7 +197,7 @@ spec:
           - name: CHAINCODE_TLS_ENABLED
             value: "{{ .Values.chaincode.tls | default false }}"
           - name: CHAINCODE_ADDRESS
-            value: "{{ .Values.chaincode.address | default (printf "%s.%s.svc.cluster.local:7052" .Release.Name .Release.Namespace) }}"
+            value: "{{ .Values.chaincode.address | default (printf "%s.%s:7052" .Release.Name .Release.Namespace) }}"
           - name: COMPONENT_NAME
             value: "{{ .Release.Namespace }}"
           - name: ORG_NAME
@@ -303,22 +297,22 @@ spec:
                 
                 {{- if eq .Values.global.vault.type "hashicorp" }}
                 # Get server certificates from vault
-                SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}"
-                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${SERVER_USER}-tls"
+                CLIENT_USER="${ORG_NAME}-${CHAINCODE_NAME}"
+                vaultBevelFunc 'readJson' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/users/${CLIENT_USER}-msp"
                 if [ "$SECRETS_AVAILABLE" = "yes" ]; then
-                  echo "${VAULT_SECRET}" | jq -r ".ca_crt" | base64 -d > ${PACKAGE_DIR}/ca.crt
-                  echo "${VAULT_SECRET}" | jq -r ".client_crt" | base64 -d > ${PACKAGE_DIR}/client.crt
-                  echo "${VAULT_SECRET}" | jq -r ".client_key" | base64 -d > ${PACKAGE_DIR}/client.key
+                  echo "${VAULT_SECRET}" | jq -r ".admincerts" | base64 -d > ${PACKAGE_DIR}/ca.crt
+                  echo "${VAULT_SECRET}" | jq -r ".signcerts" | base64 -d > ${PACKAGE_DIR}/client.crt
+                  echo "${VAULT_SECRET}" | jq -r ".keystore" | base64 -d > ${PACKAGE_DIR}/client.key
                 else
                   echo "Error: Server certificates not found in vault"
                   exit 1
                 fi
                 {{- else }}
                 # Get server certificates from Kubernetes secret
-                SERVER_USER="${CHAINCODE_NAME}-${CHAINCODE_VERSION}"
-                kubectl get secret --namespace {{ .Release.Namespace }} ${SERVER_USER}-tls -o jsonpath='{.data.cacrt}' | base64 -d > ${PACKAGE_DIR}/ca.crt
-                kubectl get secret --namespace {{ .Release.Namespace }} ${SERVER_USER}-tls -o jsonpath='{.data.clientcrt}' | base64 -d > ${PACKAGE_DIR}/client.crt
-                kubectl get secret --namespace {{ .Release.Namespace }} ${SERVER_USER}-tls -o jsonpath='{.data.clientkey}' | base64 -d > ${PACKAGE_DIR}/client.key
+                CLIENT_USER="${ORG_NAME}-${CHAINCODE_NAME}"
+                kubectl get secret --namespace {{ .Release.Namespace }} ${CLIENT_USER}-msp -o jsonpath='{.data.admincerts}' | base64 -d > ${PACKAGE_DIR}/ca.crt
+                kubectl get secret --namespace {{ .Release.Namespace }} ${CLIENT_USER}-msp -o jsonpath='{.data.signcerts}' | base64 -d > ${PACKAGE_DIR}/client.crt
+                kubectl get secret --namespace {{ .Release.Namespace }} ${CLIENT_USER}-msp -o jsonpath='{.data.keystore}' | base64 -d > ${PACKAGE_DIR}/client.key
                 {{- end }}
                 
                 # Verify certificate files
@@ -402,7 +396,7 @@ spec:
               echo "Checking if chaincode is already installed..."
               
               # Check installed chaincodes using peer CLI directly
-              INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | jq '.installed_chaincodes?' | jq --arg CCLABEL "${PACKAGE_NAME}" '.[]? | select(.label==$CCLABEL) | .package_id')
+              INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | jq -r --arg CCLABEL "${PACKAGE_NAME}" '.installed_chaincodes[]? | select(.label==$CCLABEL) | .package_id')
               
               if [ -n "$INSTALLED_CC" ]; then
                 echo "Chaincode ${PACKAGE_NAME} is already installed with package ID: $INSTALLED_CC"
@@ -410,7 +404,7 @@ spec:
                 # Store/update the package ID for future reference
                 {{- if eq .Values.global.vault.type "hashicorp" }}
                   echo "Storing existing package ID in vault..."
-                  echo "{\"data\":{\"package_id\":${INSTALLED_CC}}}" > package_id_payload.json
+                  echo "{\"data\":{\"package_id\":\"${INSTALLED_CC}\"}}" > package_id_payload.json
                   vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id" 'package_id_payload.json'
                 {{- end }}
                 # Check if package ID secret already exists
@@ -453,7 +447,7 @@ spec:
                 
                 # Verify installation
                 echo "Verifying chaincode installation..."
-                INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | jq '.installed_chaincodes?' | jq --arg CCLABEL "${PACKAGE_NAME}" '.[]? | select(.label==$CCLABEL) | .package_id')
+                INSTALLED_CC=$(peer lifecycle chaincode queryinstalled -O json | jq -r --arg CCLABEL "${PACKAGE_NAME}" '.installed_chaincodes[]? | select(.label==$CCLABEL) | .package_id')
                 
                 if [ -n "$INSTALLED_CC" ]; then
                   echo "Chaincode installed successfully with package ID: $INSTALLED_CC"
@@ -461,7 +455,7 @@ spec:
                   # Store the package ID for future reference
                   {{- if eq .Values.global.vault.type "hashicorp" }}
                   echo "Storing package ID in vault..."
-                  echo "{\"data\":{\"package_id\":${INSTALLED_CC}}}" > package_id_payload.json
+                  echo "{\"data\":{\"package_id\":\"${INSTALLED_CC}\"}}" > package_id_payload.json
                   vaultBevelFunc 'write' "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/chaincodes/${CHAINCODE_NAME}/v${CHAINCODE_VERSION}/package_id" 'package_id_payload.json'
                   {{- end }}
                   echo "Storing package ID in Kubernetes secret..."

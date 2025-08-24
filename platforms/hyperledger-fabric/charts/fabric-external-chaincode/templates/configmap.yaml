@@ -109,7 +109,7 @@ data:
     # chaincode_name
     CHAINCODE_NAME={{ .Values.chaincode.name }}
     # chaincode hostname
-    HOST="{{ .Release.Name }}.{{ .Release.Namespace }}.svc.cluster.local"
+    HOST="{{ .Release.Name }}.{{ .Release.Namespace }}"
     # chaincode version
     VERSION={{ .Values.chaincode.version }}
     # CA Server url
