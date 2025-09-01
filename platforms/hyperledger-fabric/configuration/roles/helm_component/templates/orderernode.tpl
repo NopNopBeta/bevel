@@ -72,7 +72,7 @@ spec:
 {% endif %}
 
     orderer:
-      consensus: {{ orderer.consensus }}
+      consensus: {{ network.consensus }}
       logLevel: info
       localMspId: {{ org_name }}MSP
       tlsStatus: true
@@ -94,17 +94,6 @@ spec:
         requests:
           memory: 512M
           cpu: 0.25
-
-{% if orderer.consensus == 'kafka' %}
-    kafka:
-      readinessCheckInterval: 10
-      readinessThresHold: 10
-      brokers:
-{% for i in range(consensus.replicas) %}
-      - {{ consensus.name }}-{{ i }}.{{ consensus.type }}.{{ namespace }}.svc.cluster.local:{{ consensus.grpc.port }}
-{% endfor %}
-{% endif %}
-
     healthCheck: 
       retries: 10
       sleepTimeAfterError: 15

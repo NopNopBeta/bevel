@@ -67,8 +67,8 @@ docker build . -t ghcr.io/hyperledger/bevel-build:latest
 docker run -it -v $(pwd):/home/bevel/ --user ubuntu ghcr.io/hyperledger/bevel-build:latest
 
 # If you want to run a long running container
-docker run -d -v "$(pwd)":/home/bevel/ --user ubuntu bevel-build:latest tail -f /dev/null --name bevel
-docker exec -it bevel bash
+docker run --name bevel-build -d -v "$(pwd)":/home/bevel/ --user ubuntu bevel-build:latest tail -f /dev/null
+docker exec -it bevel-build bash
 cd bevel
 # And then run the ansible scripts from /home/bevel
 ```

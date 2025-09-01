@@ -3,7 +3,7 @@
 #
 #  SPDX-License-Identifier: Apache-2.0
 ##############################################################################################
-
+{{- if empty .Values.address }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -32,3 +32,4 @@ spec:
     protocol: TCP
     port: {{ .Values.chaincode.port }}
     targetPort: {{ .Values.chaincode.port }}
+{{- end }}

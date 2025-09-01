@@ -122,21 +122,6 @@ spec:
               ADMIN_MSP_SECRET="false"
             fi
           }
-
-          function getEndorserSecret {
-            ORG_NAME=$1
-            echo "Getting endorser certificates for ${ORG_NAME} from Vault."
-            vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/endorsers/${ORG_NAME}"
-            if [ "$SECRETS_AVAILABLE" == "yes" ]
-            then
-              ENDORSER_CACERT=$(echo ${VAULT_SECRET} | jq -r '.["cacerts"]')
-              mkdir -p ${MOUNT_PATH}/endorsers/${ORG_NAME}/msp/cacerts
-              echo "${ENDORSER_CACERT}" > ${MOUNT_PATH}/endorsers/${ORG_NAME}/msp/cacerts/ca.crt
-              return 0
-            else
-              return 1
-            fi     
-          }
           {{- else }}
           function getAdminMspSecret {
             KEY=$1
@@ -159,20 +144,20 @@ spec:
             fi            
           }
 
+          {{- end }}
           function getEndorserSecret {
             ORG_NAME=$1
-            KUBENETES_SECRET=$(kubectl get secret ${ORG_NAME}-endorser-certs --namespace {{ .Release.Namespace }} -o json)
-            if  [ "$KUBENETES_SECRET" = "" ]; then
-              return 1
-            else
-              ENDORSER_CACERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.cacerts'  | base64 -d)
+            {{- range .Values.endorsers }}
+            if [ "${ORG_NAME}" = "{{ .name }}" ]; then
+              ENDORSER_CACERT=$(echo "{{ .certificate }}" | base64 -d)
               mkdir -p ${MOUNT_PATH}/endorsers/${ORG_NAME}/msp/cacerts
               echo "${ENDORSER_CACERT}" > ${MOUNT_PATH}/endorsers/${ORG_NAME}/msp/cacerts/ca.crt
               return 0
-            fi            
+            fi
+            {{- end }}
+            echo "Error: Endorser org '${ORG_NAME}' not found"
+            return 1
           }
-
-          {{- end }}
           OUTPUT_PATH="${MOUNT_PATH}/admin/msp"
           mkdir -p ${OUTPUT_PATH}/admincerts
           mkdir -p ${OUTPUT_PATH}/cacerts
@@ -185,7 +170,7 @@ spec:
           do
             
             getAdminMspSecret admin-msp
-          # Get endorser certificates
+            # Get endorser certificates
             ENDORSER_SECRETS_SUCCESS=true
             for name in $ENDORSER_NAMES; do
               if ! getEndorserSecret "$name"; then

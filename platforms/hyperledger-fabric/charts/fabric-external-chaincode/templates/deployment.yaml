@@ -3,7 +3,7 @@
 #
 #  SPDX-License-Identifier: Apache-2.0
 ##############################################################################################
-
+{{- if empty .Values.address }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -217,3 +217,4 @@ spec:
             mountPath: {{ .Values.chaincode.crypto_mount_path | default "/crypto" }}
             readOnly: true
           {{- end }}
+{{- end }}

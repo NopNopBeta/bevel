@@ -110,8 +110,10 @@ chaincode:
 endorsers:
   - name: org1
     corePeerAddress: peer0.org1-net:7051
+    certificate: awdadads # base64 encoded tlsca certificate
   - name: org2
     corePeerAddress: peer0.org2-net:7051
+    certificate: awdadads # base64 encoded tlsca certificate
 
 # Lifecycle configuration
 # Control which operations to perform
@@ -120,11 +122,11 @@ lifecycle:
     enabled: true
     waitForInstall: true
   commit:
-    enabled: true
-    waitForApprove: true
+    enabled: false
+    waitForApprove: false
   invoke:
-    enabled: true
-    waitForCommit: true
+    enabled: false
+    waitForCommit: false
 
 # Custom labels
 labels:

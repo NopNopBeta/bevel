@@ -63,15 +63,7 @@ organizations:
 {% endfor %}
 {% endfor %}
 
-consensus: {{ consensus.name }}
-
-{% if consensus.name == 'kafka' %}
-kafka:
-  brokers:
-{% for i in range(consensus.replicas) %}
-    - {{ consensus.name }}-{{ i }}.{{ consensus.type }}.{{ component_ns }}.svc.cluster.local:{{ consensus.grpc.port }}
-{% endfor %}
-{% endif %}
+consensus: {{ consensus }}
 
 channels:
 {% for channel in network.channels %} 

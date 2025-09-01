@@ -3,6 +3,7 @@ kind: Job
 metadata:
   name: {{ .Release.Name }}-package-install
   labels:
+    app: {{ .Release.Name }}
     app.kubernetes.io/name: {{ include "fabric-external-chaincode.name" . }}-package
     app.kubernetes.io/component: chaincode-package
     app.kubernetes.io/part-of: {{ include "fabric-external-chaincode.fullname" . }}
@@ -20,6 +21,7 @@ spec:
   template:
     metadata:
       labels:
+        app: {{ .Release.Name }}
         app.kubernetes.io/name: {{ include "fabric-external-chaincode.name" . }}-package
         app.kubernetes.io/component: chaincode-package
         app.kubernetes.io/part-of: {{ include "fabric-external-chaincode.fullname" . }}
@@ -118,28 +120,32 @@ spec:
             fi
           }
 
-          # Function to get Admin TLS Secret  
-          getAdminTlsSecret() {
+          {{- else }}
+          function getAdminMspSecret {
             KEY=$1
-            echo "Getting Admin TLS certificates from Vault."
-            vaultBevelFunc "readJson" "${VAULT_SECRET_ENGINE}/${VAULT_SECRET_PREFIX}/users/${KEY}"
-            if [ "$SECRETS_AVAILABLE" = "yes" ]; then
-              ADMINTLSCERT=$(echo ${VAULT_SECRET} | jq -r '.["tls_crt"]')
-              ADMINTLSKEY=$(echo ${VAULT_SECRET} | jq -r '.["tls_key"]')
-
-              OUTPUT_TLS_PATH="${MOUNT_PATH}/tls"
-              mkdir -p ${OUTPUT_TLS_PATH}
-              echo "${ADMINTLSCERT}" >> ${OUTPUT_TLS_PATH}/client.crt
-              echo "${ADMINTLSKEY}" >> ${OUTPUT_TLS_PATH}/client.key
-              ADMIN_TLS_SECRET="true"
+            KUBENETES_SECRET=$(kubectl get secret ${KEY} --namespace {{ .Release.Namespace }} -o json)
+            if  [ "$KUBENETES_SECRET" = "" ]; then
+              ADMIN_MSP_SECRET="false"
             else
-              echo "Admin TLS certificates not found in vault"
-              ADMIN_TLS_SECRET="false"
-            fi
+              ADMINCERT=$(echo ${KUBENETES_SECRET} | jq -r '.data.admincerts'  | base64 -d)
+              CACERTS=$(echo ${KUBENETES_SECRET} | jq -r '.data.cacerts'  | base64 -d)
+              KEYSTORE=$(echo ${KUBENETES_SECRET} | jq -r '.data.keystore'  | base64 -d)
+              SIGNCERTS=$(echo ${KUBENETES_SECRET} | jq -r '.data.signcerts'  | base64 -d)
+              TLSCACERTS=$(echo ${KUBENETES_SECRET} | jq -r '.data.tlscacerts'  | base64 -d)
+
+              echo "${ADMINCERT}" > ${OUTPUT_PATH}/admincerts/admin.crt
+              echo "${CACERTS}" > ${OUTPUT_PATH}/cacerts/ca.crt
+              echo "${KEYSTORE}" > ${OUTPUT_PATH}/keystore/server.key
+              echo "${SIGNCERTS}" > ${OUTPUT_PATH}/signcerts/server.crt
+              echo "${TLSCACERTS}" > ${OUTPUT_PATH}/tlscacerts/tlsca.crt   
+              ADMIN_MSP_SECRET="true"
+            fi            
           }
+
+          {{- end }}
+          echo "Getting MSP certificates from Vault."
+
           OUTPUT_PATH="${MOUNT_PATH}/admin/msp"
-          OUTPUT_TLS_PATH="${MOUNT_PATH}/tls"
-          mkdir -p ${OUTPUT_TLS_PATH}
           mkdir -p ${OUTPUT_PATH}/admincerts
           mkdir -p ${OUTPUT_PATH}/cacerts
           mkdir -p ${OUTPUT_PATH}/keystore
@@ -149,9 +155,8 @@ spec:
           while [ "$COUNTER" -le 20 ]
           do
             getAdminMspSecret admin-msp
-            getAdminTlsSecret admin-tls
 
-            if [ "$ADMIN_MSP_SECRET" = "true" ] && [ "$ADMIN_TLS_SECRET" = "true" ]
+            if [ "$ADMIN_MSP_SECRET" = "true" ]
             then
               echo "Peer certificates have been obtained correctly"
               break
@@ -167,10 +172,6 @@ spec:
             echo "Retry attempted `expr $COUNTER - 1` times, The peer certificates have not been obtained."
             exit 1
           fi
-          {{- else }}
-          echo "Non-hashicorp vault not implemented for certificate retrieval"
-          exit 0
-          {{- end }}
         volumeMounts:
         - name: certificates
           mountPath: /secret

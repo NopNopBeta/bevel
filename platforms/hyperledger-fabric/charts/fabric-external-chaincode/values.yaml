@@ -102,6 +102,8 @@ chaincode:
   crypto_mount_path: "/secrets"
   # if tls is disabled or not | BOOLEAN | eg. true
   tls: true
+  # Pass chaincode address if already deployed
+  address:
   #Provide the serviceType for the chaincode
   #Eg. serviceType: NodePort
   serviceType: ClusterIP 
