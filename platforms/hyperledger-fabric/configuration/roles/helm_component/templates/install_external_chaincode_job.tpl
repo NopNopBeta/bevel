@@ -72,7 +72,7 @@ spec:
       version: {{ component_chaincode.version }}
       tls: {{ component_chaincode.tls }}
       crypto_mount_path: "/crypto"
-{% if org.services.peers | length > 1 and loop.index0 > 0 %}
+{% if org.services.peers | length > 1 and peer_name != org.services.peers[0].name %}
       address: {{ org.services.peers[0].name }}-{{ component_chaincode.name }}-{{ chaincode.version | replace('.','-')}}.{{ namespace }}:7052
 {% endif %}
       serviceType: ClusterIP

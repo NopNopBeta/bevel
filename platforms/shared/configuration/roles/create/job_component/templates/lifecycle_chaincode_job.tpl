@@ -31,7 +31,7 @@ peer:
 {% if network.env.proxy == 'none' %}
   address: {{ peer_name }}.{{ component_ns }}:7051
 {% else %}
-  address: {{ peer_adress }}
+  address: {{ peer_address }}
 {% endif %}
   localMspId: {{ name }}MSP
   logLevel: info
@@ -47,7 +47,7 @@ chaincode:
   endorsementPolicies: {{ chaincode.endorsements }}
   builder: hyperledger/fabric-ccenv:{{ network.version }}
   initRequired: {{ chaincode.init_required }}
-{% if collections_config is defined %}
+{% if chaincode.collections_config is defined %}
   pdc:
     enabled: true
     collectionsConfig: {{ pdc_config_content }}

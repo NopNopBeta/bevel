@@ -3,7 +3,7 @@
 #
 #  SPDX-License-Identifier: Apache-2.0
 ##############################################################################################
-{{- if empty .Values.address }}
+{{- if empty .Values.chaincode.address }}
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -201,6 +201,12 @@ spec:
               value: "0.0.0.0:7052"
             - name: CHAINCODE_TLS_DISABLED
               value: "{{ not .Values.chaincode.tls }}"
+            - name: CORE_PEER_LOCALMSPID
+              value: "{{ .Values.peer.localMspId }}"
+            - name: CORE_PEER_TLS_ENABLED
+              value: "{{ .Values.peer.tlsStatus }}"
+            - name: CORE_PEER_ADDRESS
+              value: "{{ .Values.peer.address }}"
             {{- if .Values.chaincode.tls }}
             - name: CORE_CHAINCODE_TLS_KEY_FILE
               value: "{{ .Values.chaincode.crypto_mount_path | default "/crypto" }}/client.key"
