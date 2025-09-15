@@ -147,17 +147,6 @@
         docker_url: "{{ network.docker.url }}"
         kubernetes: "{{ org.k8s }}"
         generateGenesis: true
-      when: generate_configtx is not defined or generate_configtx == 'false'
-
-    - name: "Create genesis block for new org"
-      include_role: 
-        name: "create/genesis"
-      vars:
-        org: "{{ network['organizations'] | first }}"
-        docker_url: "{{ network.docker.url }}"
-        kubernetes: "{{ org.k8s }}"
-        generateGenesis: false
-      when: generate_configtx is defined and generate_configtx == 'true'
 
   vars: #These variables can be overriden from the command line
     privilege_escalate: false           #Default to NOT escalate to root privledges

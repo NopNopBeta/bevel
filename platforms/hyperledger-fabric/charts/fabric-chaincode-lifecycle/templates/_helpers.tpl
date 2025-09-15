@@ -56,3 +56,19 @@ Endorser addresses for commit operation
 {{ toYaml $value }}
 {{- end }}
 {{- end }}
+
+{{/*
+Get the orderer TLS cacert ConfigMap name
+Tries multiple possible names in order of preference
+*/}}
+{{- define "ordererConfigMap" -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $kubectlCmd := printf "kubectl get configmap -n %s" $namespace -}}
+{{- if (lookup "v1" "ConfigMap" $namespace "orderer-tls-cacert") -}}
+orderer-tls-cacert
+{{- else if (lookup "v1" "ConfigMap" $namespace "peer0-orderer-tls-cacert") -}}
+peer0-orderer-tls-cacert
+{{- else -}}
+orderer-tls-cacert
+{{- end -}}
+{{- end -}}

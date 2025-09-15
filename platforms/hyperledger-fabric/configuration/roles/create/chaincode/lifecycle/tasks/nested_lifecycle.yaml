@@ -11,7 +11,5 @@
     name: "{{ org.name | lower }}"
     namespace: "{{ org.name | lower }}-net"
     component_type: "peer"
-  loop: "{{ org.services.peers }}"
-  loop_control:
-    loop_var: peer
+    peer: "{{ org.services.peers | first }}" # Only one peer needed to approve/commit/invoke
   when: peer.chaincodes is defined

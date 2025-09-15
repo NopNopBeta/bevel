@@ -61,7 +61,7 @@ spec:
           defaultMode: 0777
       - name: orderer-tls-cacert
         configMap:
-          name: orderer-tls-cacert
+          name: {{ include "ordererConfigMap" . }}
           defaultMode: 0775
           items:
             - key: cacert

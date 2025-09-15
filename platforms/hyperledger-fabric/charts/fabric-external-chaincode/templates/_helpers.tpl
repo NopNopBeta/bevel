@@ -27,6 +27,22 @@ Create chart name and version as used by the chart label.
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
 
+{{/*
+Get the orderer TLS cacert ConfigMap name
+Tries multiple possible names in order of preference
+*/}}
+{{- define "ordererConfigMap" -}}
+{{- $namespace := .Release.Namespace -}}
+{{- $kubectlCmd := printf "kubectl get configmap -n %s" $namespace -}}
+{{- if (lookup "v1" "ConfigMap" $namespace "orderer-tls-cacert") -}}
+orderer-tls-cacert
+{{- else if (lookup "v1" "ConfigMap" $namespace "peer0-orderer-tls-cacert") -}}
+peer0-orderer-tls-cacert
+{{- else -}}
+orderer-tls-cacert
+{{- end -}}
+{{- end -}}
+
 {{- define "labels.deployment" -}}
 {{- range $value := .Values.labels.deployment }}
 {{ toYaml $value }}
