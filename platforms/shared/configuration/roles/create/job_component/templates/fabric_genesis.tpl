@@ -82,7 +82,7 @@ channels:
 {% endfor %}
 
 settings:
-  generateGenesis: {{ generateGenisisBLock }} 
+  generateGenesis: {{ generateGenesis }} 
   removeConfigMapOnDelete: false
 
 {% if add_org %}

@@ -1,0 +1,6 @@
+- name: Save new org data file locally
+  shell: |
+     cp '{{ org.new-data-file }}' > {{ files_loc }}
+  vars:
+    files_loc: "{{ build_path }}/channel-artifacts/{{ channel_name | lower }}.json"
+
