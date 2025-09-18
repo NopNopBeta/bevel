@@ -1,0 +1,116 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: peer0
+  namespace: warehouse-net
+  annotations:
+    fluxcd.io/automated: "false"
+spec:
+  interval: 1m
+  releaseName: peer0
+  chart:
+    spec:
+      interval: 1m
+      sourceRef:
+        kind: GitRepository
+        name: flux-local
+        namespace: flux-local
+      chart: platforms/hyperledger-fabric/charts/fabric-peernode    
+  values:
+    global:
+      version: 2.2.2
+      serviceAccountName: vault-auth
+      cluster:
+        provider: minikube
+        cloudNativeServices: false
+      vault:
+        type: hashicorp
+        network: fabric
+        address: http://10.38.240.11:8200
+        authPath: localwarehouse
+        secretEngine: secretsv2
+        secretPrefix: "data/localwarehouse"
+        role: vault-role
+        tls: false
+      proxy:
+        provider: none
+        externalUrlSuffix: develop.local.com
+
+    storage:
+      enabled: True
+      peer: 512Mi
+      couchdb: 512Mi
+      reclaimPolicy: "Delete" 
+      volumeBindingMode: Immediate 
+      allowedTopologies:
+        enabled: false
+
+    certs:
+      generateCertificates: true
+      orgData:
+        caAddress: ca.warehouse-net:7054
+        caAdminUser: warehouse-admin
+        caAdminPassword: warehouse-adminpw
+        orgName: warehouse
+        type: peer
+        componentSubject: "O=Warehouse,OU=Warehouse,L=51.50/-0.13/London,C=GB"
+
+      users: 
+        usersList:
+        - {'user': None, 'identity': 'warehouse_admin', 'attributes': [{'key': 'hf.Registrar.Roles', 'value': 'client,orderer,peer,user'}, {'key': 'hf.Registrar.DelegateRoles', 'value': 'client,orderer,peer,user'}, {'key': 'hf.Revoker', 'value': 'true'}, {'key': 'hf.IntermediateCA', 'value': 'true'}, {'key': 'hf.GenCRL', 'value': 'true'}, {'key': 'hf.Registrar.Attributes', 'value': '*'}, {'key': 'hf.AffiliationMgr', 'value': 'true'}]}
+
+      settings:
+        createConfigMaps: True
+        refreshCertValue: false
+        addPeerValue: false
+        removeCertsOnDelete: true
+        removeOrdererTlsOnDelete: true
+
+    image:
+      couchdb: ghcr.io/hyperledger/bevel-fabric-couchdb
+      peer: ghcr.io/hyperledger/bevel-fabric-peer
+      alpineUtils: ghcr.io/hyperledger/bevel-alpine:latest
+      pullSecret: regcred
+
+    peer:
+      gossipPeerAddress: peer0.warehouse-net:7051
+      logLevel: info
+      localMspId: warehouseMSP
+      tlsStatus: true
+      cliEnabled: True
+      ordererAddress: orderer1.orderer-org-net:7050
+      builder: hyperledger/fabric-ccenv
+      couchdb:
+        username: warehouse-user
+        password: warehouse-userpw
+      mspConfig:
+        organizationalUnitIdentifiers:
+        nodeOUs:
+          clientOUIdentifier: client
+          peerOUIdentifier: peer
+          adminOUIdentifier: admin
+          ordererOUIdentifier: orderer
+      serviceType: ClusterIP 
+      loadBalancerType: ""
+      ports:
+        grpc:
+          clusterIpPort: 7051
+        events:
+          clusterIpPort: 7053
+        couchdb:
+          clusterIpPort: 5984
+        metrics:
+          enabled: False
+          clusterIpPort: 9443    
+      resources:
+        limits:
+          memory: 1Gi
+          cpu: 1
+        requests:
+          memory: 512M
+          cpu: 0.25
+      upgrade: False
+      healthCheck: 
+        retries: 20
+        sleepTimeAfterError: 15
+
