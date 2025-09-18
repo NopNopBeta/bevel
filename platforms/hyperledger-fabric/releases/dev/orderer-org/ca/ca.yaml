@@ -53,6 +53,6 @@ spec:
       tlsStatus: true
       adminUsername: orderer-org-admin
       adminPassword: orderer-org-adminpw
-      subject: "/C=GB/ST=London/L=London/O=OrdererOrg/CN=ca.orderer-net"
+      subject: "/C=GB/ST=London/L=London/O=OrdererOrg/CN=ca.orderer-org-net"
       clusterIpPort: 7054
 
