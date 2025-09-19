@@ -6,27 +6,29 @@
 ---
 install_arch: "amd64"
 # yaml-language-server: $schema=../../../../platforms/network-schema.json
-# This is a sample configuration file for adding a new Peer Organization to an existing network.
+# This is a sample configuration file for approving New Org from Existing Orgs
 network:
   # Network level configuration specifies the attributes required for each organization
   # to join an existing network.
   type: fabric
-  version: 2.5.4 # currently tested 2.2.2 and 2.5.4
+  version: 2.5.4 # currently tested 1.4.8, 2.2.2 and 2.5.4
 
   #Environment section for Kubernetes setup
   env:
-    type: "e08" # tag for the environment. Important to run multiple flux on single cluster
+    type: "e01" # Same tag for existing environment
     proxy: haproxy # values can be 'haproxy' or 'none'
-    retry_count: 20 # Retry count for the checks
+    retry_count: 50 # Retry count for the checks
     external_dns: disabled # Should be enabled if using external-dns for automatic route configuration
-    labels:
-      service: {}
+    annotations:
+      # Additional annotations that can be used for some pods (ca, ca-tools, orderer and peer nodes)
+      service:
+      - example1: example2
       deployment: {}
       pvc: {}
   # For providing Custom Templates to generate configtx.yaml
   configtx:
-    custom: false # true : when custom tpls are to be provided | false : when the default tpls are to be used
-    folder_path: /absolute/path/to/folder # path to folder where all 4 tpls are placed e.g. /home/bevel/build/configtx_tpl/ 
+    custom: false # true : when custom tpl(s) are to be provided | false : when the default tpl(s) are to be used
+    folder_path: /absolute/path/to/folder # path to folder where the tpl(s) are placed e.g. /home/bevel/build/configtx_tpl/
 
   # Docker registry details where images are stored. This will be used to create k8s secrets
   # Please ensure all required images are built and stored in this registry.
@@ -42,53 +44,59 @@ network:
   - orderer:
     type: orderer
     name: orderer1
-    org_name: org1-tf # Provide Orderer org name
+    org_name: org1-tf
     uri: orderer1.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, Can be external or internal URI for orderer which should be reachable by all peers
-    certificate: "/home/bevel/build/org1-tf/server.crt" # Must provide existing orderer's TLS CA Cert
+    certificate: "/home/bevel/build/org1-tf/server.crt"
   # The channels defined for a network with participating peers in each channel
-  # Must add new Peers to existing channel
   channels:
   - channel:
     consortium: tfConsortium
     channel_name: tfnet-ch1
     channel_status: existing
     osn_creator_org:
-      # Organization name, whose orderers will create the channel. This field is only used with version 2.5
+      # Organization name, whose orderers has created the channel
       name: org1-tf
     chaincodes:
-    - "datapoint-transfer"
+    - "datapoint-collection"
     orderers:
     - org1-tf
     participants:
     - organization:
       name: org1-tf
       type: creator # creator organization will create the channel and instantiate chaincode, in addition to joining the channel and install chaincode
-      org_status: existing # Status of the organization for the existing network, can be new / existing
+      org_status: existing
       peers:
       - peer:
         name: peer0
         type: anchor
         gossipAddress: peer0.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External or internal URI of the gossip peer
         peerAddress: peer0.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External URI of the peer
-      ordererAddress: orderer1.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External or internal URI of the orderer
+      - peer:
+        name: peer1
+        type: nonanchor
+        peerstatus: new # new peers should have status as new
+        gossipAddress: peer0.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External or internal URI of the gossip peer
+        peerAddress: peer1.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External URI of the peer
+      ordererAddress: orderer1.org1-tf-net.tfe01.loyal-fibre.com:443
     - organization:
       name: org2-tf
       type: joiner
-      org_status: new
+      org_status: new # Use 'new' for new org
+      new_data: /home/bevel/build/org2-tf/org2-new-data.json # JSON file from the configmap from New Org cluster
       peers:
       - peer:
         name: peer0
         type: anchor
         gossipAddress: peer1.org2-tf-net.tfe08.mouse17.com:443
-        peerAddress: peer0.org2-tf-net.tfe08.mouse17.com:443
+        peerAddress: peer0.org2-tf-net.tfe08.mouse17.com:443 # Must include port, External URI of the peer
       - peer:
         name: peer1
         type: nonanchor
         gossipAddress: peer0.org2-tf-net.tfe08.mouse17.com:443
         peerAddress: peer1.org2-tf-net.tfe08.mouse17.com:443
-      ordererAddress: orderer1.org1-tf-net.tfe01.loyal-fibre.com:443 # Orderer is same
+      ordererAddress: orderer1.org1-tf-net.tfe01.loyal-fibre.com:443
     endorsers:
-    # Only one peer per org required for endorsement, Add the new endorser
+    # Only one peer per org required for endorsement
     - organization:
       name: org1-tf
       corepeerAddress: peer0.org1-tf-net.tfe01.loyal-fibre.com:443
@@ -96,7 +104,7 @@ network:
     - organization:
       name: org2-tf
       corepeerAddress: peer0.org2-tf-net.tfe08.mouse17.com:443
-      certificate: "/home/bevel/build/org2-tf/server.crt" # certificate path for peer
+      certificate: "/home/bevel/build/org2-tf/server.crt" # Also get the Peer TLS CA CERT from New org
   # Allows specification of one or many organizations that will be connecting to a network.
   # If an organization is also hosting the root of the network (e.g. doorman, membership service, etc),
   # then these services should be listed in this section as well.
@@ -104,27 +112,29 @@ network:
 
   # Specification for the 1st organization. Each organization maps to a VPC and a separate k8s cluster
   - organization:
-    name: org2-tf
+    name: org1-tf
     country: GB
-    state: Zurich
-    location: Zurich
-    subject: "O=Org2,OU=Org2,C=GB,ST=London,L=London"
-    external_url_suffix: tfe08.mouse17.com
-    org_status: new # Status of the organization for the existing network, can be new / existing
-    orderer_org: org1-tf # Name of the organization that provides the ordering service
+    state: London
+    location: London
+    subject: "O=CGI,OU=CGI,L=London,C=GB"
+    external_url_suffix: tfe01.loyal-fibre.com
+    org_status: existing
+    orderer_org: org1-tf
+    fabric_console: enabled # To deploy Fabric console for this organization
     ca_data:
-      certificate: "/home/bevel/build/org2-tf/server.crt"
+      certificate: /home/bevel/build/org1-tf/server.crt # Path where ca public cert will be stored (if new) or read from (if existing ca)
 
     cloud_provider: aws # Options: aws, azure, gcp, digitalocean, minikube
     aws:
       access_key: "aws_access_key" # AWS Access key, only used when cloud_provider=aws
       secret_key: "aws_secret_key" # AWS Secret key, only used when cloud_provider=aws
+
     # Kubernetes cluster deployment variables. The config file path and name has to be provided in case
     # the cluster has already been created.
     k8s:
       region: "eu-west-2"
       context: "arn:aws:eks:eu-west-2:AWS_ACCOUNT:cluster/CLUSTER_NAME"
-      config_file: "/home/bevel/build/config-e08"
+      config_file: "/home/bevel/build/config-e01"
 
     # Hashicorp Vault server address and root-token. Vault should be unsealed.
     # Do not check-in root_token
@@ -136,39 +146,45 @@ network:
     # Do not check-in git_access_token
     gitops:
       git_protocol: "https" # Option for git over https or ssh
-      git_url: "https://gitlab.loyal-fibre.com/tf1/tf-bevel.git" # Gitops https or ssh url for flux value files
-      branch: "e08" # Git branch where release is being made
+      git_url: "https://gitlab.loyal-fibre.com/tf1/tf-bevel.git" # Gitops https or ssh url for flux value files 
+      branch: "e01" # Git branch where release is being made
       release_dir: "platforms/hyperledger-fabric/releases/dev" # Relative Path in the Git repo for flux sync per environment.
       component_dir: "platforms/hyperledger-fabric/releases/k8sComponent" # Relative path where values files are stored.
       chart_source: "platforms/hyperledger-fabric/charts" # Relative Path where the Helm charts are stored in Git repo
-      git_repo: "gitlab.loyal-fibre.com/tf1/tf-bevel.git" # Gitops git repository URL for git push
-      username: "git_username" # Git Service user who has rights to check-in in all branches
+      git_repo: "gitlab.loyal-fibre.com/tf1/tf-bevel.git" # Gitops git repository URL for git push  (without https://)
+      username: "git_username" # Git user who has rights to check-in in all branches
       password: "git_access_token" # Git Server user password/token (Optional for ssh; Required for https)
       email: "tf-deployer@cgi.com" # Email to use in git config
       private_key: "path_to_private_key" # Path to private key file which has write-access to the git repo (Optional for https; Required for ssh)
-    # Generating User Certificates with custom attributes using Fabric CA in Bevel for Peer Organizations
-    users:
-    - user:
-      identity: user1
-      attributes:
-      - key: "hf.Revoker"
-        value: "true"
-    # The participating nodes are peers
-    # This organization hosts it's own CA server
+    # Services maps to the pods that will be deployed on the k8s cluster
+    # This sample is an orderer service and includes a zk-kafka consensus
     services:
       ca:
         name: ca
-        subject: "/C=GB/ST=London/L=London/O=Org2/CN=ca.org2-tf-net.tfe08.mouse17.com"
+        subject: "/C=GB/ST=London/L=London/O=CGI/CN=ca.org1-tf-net.tfe01.loyal-fibre.com"
         type: ca
         grpc:
           port: 7054
+
+      orderers:
+      # This sample has multiple orderers as an example.
+      # You can use a single orderer for most production implementations.
+      - orderer:
+        name: orderer1
+        type: orderer
+        grpc:
+          port: 7050
+        metrics:
+          enabled: false
+          port: 9443
+        ordererAddress: orderer1.org1-tf-net.tfe01.loyal-fibre.com:443
       peers:
       - peer:
         name: peer0
-        type: anchor # This can be anchor/nonanchor. Atleast one peer should be anchor peer.         
-        gossippeeraddress: peer1.org2-tf-net:7051 # Internal Address of the other peer in same Org for gossip, same peer if there is only one peer 
-        peerAddress: peer0.org2-tf-net.tfe08.mouse17.com:443 # Must include port, External URI of the peer
-        cli: enabled # Creates a peer cli pod depending upon the (enabled/disabled) tag.         
+        type: anchor # This can be anchor/nonanchor. Atleast one peer should be anchor peer.    
+        gossippeeraddress: peer0.org1-tf-net:7051 # Internal Address of the other peer in same Org for gossip, same peer if there is only one peer
+        peerAddress: peer0.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External URI of the peer
+        cli: enabled # Creates a peer cli pod depending upon the (enabled/disabled) tag.          
         grpc:
           port: 7051
         events:
@@ -188,11 +204,11 @@ network:
           collections_config: "/home/bevel/platforms/hyperledger-fabric/configuration/collections/collections_config.json"
       - peer:
         name: peer1
-        type: nonanchor # This can be anchor/nonanchor. Atleast one peer should be anchor peer.        
-        gossippeeraddress: peer0.org2-tf-net:7051 # Internal Address of the other peer in same Org for gossip, same peer if there is only one peer
-        peerAddress: peer1.org2-tf-net.tfe08.mouse17.com:443 # Must include port, External URI of the peer
-        cli: disabled # Creates a peer cli pod depending upon the (enabled/disabled) tag.
-        cactus_connector: disabled # set to enabled to create a cactus connector for Fabric
+        type: nonanchor # This can be anchor/nonanchor. Atleast one peer should be anchor peer.    
+        gossippeeraddress: peer0.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External address of the existing anchor peer
+        peerAddress: peer1.org1-tf-net.tfe01.loyal-fibre.com:443 # Must include port, External URI of the peer
+        peerstatus: new # new peers should have status as new
+        cli: disabled # Creates a peer cli pod depending upon the (enabled/disabled) tag.          
         grpc:
           port: 7051
         events:
