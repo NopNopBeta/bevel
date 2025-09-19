@@ -45,7 +45,7 @@ spec:
 
     image:
       alpineUtils: ghcr.io/hyperledger/bevel-alpine:latest
-      ca: ghcr.io/hyperledger/bevel-fabric-ca:1.4.8
+      ca: ghcr.io/hyperledger/bevel-fabric-ca:latest
       pullSecret: regcred
 
     server:
